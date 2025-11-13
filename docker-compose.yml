@@ -1,0 +1,14 @@
+version: '3.8'
+
+services:
+  subbed:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      - DATABASE_PATH=/app/data/subbed.db
+      - ADMIN_CREDENTIALS=admin:admin
+      - DEBUG=false
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped

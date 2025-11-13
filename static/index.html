@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Subbed - YouTube with Subtitles</title>
+        <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='0.9em' font-size='90'>🎬</text></svg>" />
+        <script defer src="/static/alpinejs@3.x.x.min.js"></script>
+        <style>
+            * {
+                margin: 0;
+                padding: 0;
+                box-sizing: border-box;
+            }
+
+            body {
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+                background: #0f0f0f;
+                color: #f1f1f1;
+                padding: 20px;
+            }
+
+            .container {
+                max-width: 1400px;
+                margin: 0 auto;
+            }
+
+            h1 {
+                margin-bottom: 30px;
+                font-size: 32px;
+                text-align: center;
+            }
+
+            .input-group {
+                margin-bottom: 30px;
+            }
+
+            input[type="url"] {
+                width: 100%;
+                padding: 15px;
+                font-size: 16px;
+                border: 2px solid #303030;
+                border-radius: 8px;
+                background: #1f1f1f;
+                color: #f1f1f1;
+            }
+
+            input[type="url"]:focus {
+                outline: none;
+                border-color: #3ea6ff;
+            }
+
+            .video-wrapper {
+                position: relative;
+                width: 100%;
+                padding-bottom: 56.25%; /* 16:9 aspect ratio */
+                margin-bottom: 20px;
+            }
+
+            iframe {
+                position: absolute;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                border: none;
+                border-radius: 12px;
+            }
+
+            .subtitle-overlay {
+                position: absolute;
+                bottom: 80px;
+                left: 50%;
+                transform: translateX(-50%);
+                background: rgba(0, 0, 0, 0.25);
+                color: white;
+                padding: 0.5rem 1rem;
+                border-radius: 1rem;
+                font-size: 20px;
+                line-height: 1.4;
+                text-align: center;
+                max-width: 90%;
+                z-index: 10;
+                pointer-events: none;
+                display: none;
+            }
+
+            .subtitle-overlay.active {
+                display: block;
+            }
+
+            .subtitle-overlay strong {
+                font-weight: bold;
+            }
+
+            .subtitle-overlay em {
+                font-style: italic;
+            }
+
+            .error {
+                background: #cc0000;
+                color: white;
+                padding: 15px;
+                border-radius: 8px;
+                margin-bottom: 20px;
+            }
+
+            .loading {
+                text-align: center;
+                padding: 20px;
+                color: #aaa;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="container" x-data="videoPlayer()">
+            <h1 x-show="videoTitle" x-text="videoTitle"></h1>
+
+            <form class="input-group" x-show="!fromUrlParam" @submit.prevent="loadVideo">
+                <input type="url" x-model="youtubeUrl" placeholder="Enter YouTube URL (e.g., https://youtube.com/watch?v=dQw4w9WgXcQ)" />
+            </form>
+
+            <div x-show="error" class="error" x-text="error"></div>
+            <div x-show="loading" class="loading">Loading...</div>
+
+            <div x-show="videoId && !error">
+                <div class="video-wrapper">
+                    <div id="player"></div>
+                    <div class="subtitle-overlay" :class="{ active: currentSubtitle }" x-html="currentSubtitle"></div>
+                </div>
+            </div>
+        </div>
+
+        <script src="https://www.youtube.com/iframe_api"></script>
+        <script>
+            // YouTube API ready callback
+            function onYouTubeIframeAPIReady() {
+                window.ytReady = true;
+            }
+
+            function videoPlayer() {
+                return {
+                    youtubeUrl: "",
+                    videoId: "",
+                    videoTitle: "",
+                    error: "",
+                    loading: false,
+                    currentSubtitle: "",
+                    subtitles: [],
+                    player: null,
+                    updateInterval: null,
+                    fromUrlParam: false,
+
+                    init() {
+                        // Check for URL query parameter
+                        let url = window.location.href.replace(window.location.origin, "").replace(/^\//, "").trim();
+                        url = url.replace(/https:\/*/, "https://");
+
+                        if (url) {
+                            this.youtubeUrl = url;
+                            this.fromUrlParam = true;
+                            // Auto-load the video
+                            this.$nextTick(() => {
+                                this.loadVideo();
+                            });
+                        }
+                    },
+
+                    loadVideo() {
+                        history.replaceState(null, "", location.origin + "/" + this.youtubeUrl);
+
+                        this.error = "";
+                        this.loading = true;
+
+                        // Extract video ID from URL
+                        const videoId = this.extractVideoId(this.youtubeUrl);
+                        if (!videoId) {
+                            this.error = "Invalid YouTube URL";
+                            this.loading = false;
+                            return;
+                        }
+
+                        // Fetch subtitle data from backend
+                        fetch(`/api/video?url=${encodeURIComponent(this.youtubeUrl)}`)
+                            .then((response) => {
+                                if (!response.ok) {
+                                    throw new Error("Video not found or no subtitles available");
+                                }
+                                return response.json();
+                            })
+                            .then((data) => {
+                                this.videoId = data.video.id;
+                                this.videoTitle = data.video.title;
+                                this.subtitles = this.parseSubtitles(data.subtitles);
+                                this.loading = false;
+
+                                // Initialize YouTube player
+                                this.$nextTick(() => {
+                                    this.initPlayer(videoId);
+                                });
+                            })
+                            .catch((err) => {
+                                this.error = err.message;
+                                this.loading = false;
+                            });
+                    },
+
+                    extractVideoId(url) {
+                        const patterns = [/(?:youtube\.com\/watch\?v=|youtu\.be\/)([^&\s]+)/, /^([a-zA-Z0-9_-]{11})$/];
+
+                        for (let pattern of patterns) {
+                            const match = url.match(pattern);
+                            if (match) return match[1];
+                        }
+                        return null;
+                    },
+
+                    initPlayer(videoId) {
+                        // Wait for YouTube API to be ready
+                        const initWhenReady = () => {
+                            if (typeof YT === "undefined" || typeof YT.Player === "undefined") {
+                                setTimeout(initWhenReady, 100);
+                                return;
+                            }
+
+                            if (this.player) {
+                                this.player.destroy();
+                            }
+
+                            this.player = new YT.Player("player", {
+                                videoId: videoId,
+                                playerVars: {
+                                    autoplay: 0,
+                                    controls: 1,
+                                    rel: 0,
+                                },
+                                events: {
+                                    onStateChange: (event) => this.onPlayerStateChange(event),
+                                },
+                            });
+                        };
+
+                        initWhenReady();
+                    },
+
+                    onPlayerStateChange(event) {
+                        if (event.data === YT.PlayerState.PLAYING) {
+                            this.startSubtitleSync();
+                        } else {
+                            this.stopSubtitleSync();
+                        }
+                    },
+
+                    startSubtitleSync() {
+                        if (this.updateInterval) {
+                            clearInterval(this.updateInterval);
+                        }
+
+                        this.updateInterval = setInterval(() => {
+                            if (this.player && this.player.getCurrentTime) {
+                                const currentTime = this.player.getCurrentTime();
+                                this.updateSubtitle(currentTime);
+                            }
+                        }, 100);
+                    },
+
+                    stopSubtitleSync() {
+                        if (this.updateInterval) {
+                            clearInterval(this.updateInterval);
+                            this.updateInterval = null;
+                        }
+                    },
+
+                    updateSubtitle(currentTime) {
+                        const subtitle = this.subtitles.find((sub) => currentTime >= sub.start && currentTime <= sub.end);
+
+                        this.currentSubtitle = subtitle ? this.formatMarkdown(subtitle.text) : "";
+                    },
+
+                    formatMarkdown(text) {
+                        // Escape HTML to prevent XSS
+                        text = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+                        // Convert markdown to HTML
+                        // Bold: **text** or __text__
+                        text = text.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+                        text = text.replace(/__(.+?)__/g, "<strong>$1</strong>");
+
+                        // Italic: *text* or _text_ (but not part of __ or **)
+                        text = text.replace(/(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)/g, "<em>$1</em>");
+                        text = text.replace(/(?<!_)_(?!_)(.+?)(?<!_)_(?!_)/g, "<em>$1</em>");
+
+                        return text;
+                    },
+
+                    parseSubtitles(subtitles) {
+                        if (!subtitles || subtitles.length === 0) return [];
+
+                        // Parse the first subtitle's content (SRT format)
+                        const content = subtitles[0].content;
+                        const lines = content.split("\n");
+                        const parsed = [];
+                        let i = 0;
+
+                        while (i < lines.length) {
+                            // Skip empty lines
+                            if (!lines[i].trim()) {
+                                i++;
+                                continue;
+                            }
+
+                            // Skip subtitle number
+                            if (/^\d+$/.test(lines[i].trim())) {
+                                i++;
+                            }
+
+                            // Parse timestamp
+                            if (lines[i] && lines[i].includes("-->")) {
+                                const [start, end] = lines[i].split("-->").map((t) => this.timeToSeconds(t.trim()));
+                                i++;
+
+                                // Collect text lines
+                                let text = "";
+                                while (i < lines.length && lines[i].trim() && !lines[i].includes("-->")) {
+                                    text += (text ? " " : "") + lines[i].trim();
+                                    i++;
+                                }
+
+                                if (text) {
+                                    parsed.push({ start, end, text });
+                                }
+                            } else {
+                                i++;
+                            }
+                        }
+
+                        return parsed;
+                    },
+
+                    timeToSeconds(timeStr) {
+                        // Convert SRT timestamp (00:00:00,000) to seconds
+                        const parts = timeStr.replace(",", ".").split(":");
+                        if (parts.length === 3) {
+                            return parseFloat(parts[0]) * 3600 + parseFloat(parts[1]) * 60 + parseFloat(parts[2]);
+                        }
+                        return 0;
+                    },
+                };
+            }
+        </script>
+    </body>
+</html>

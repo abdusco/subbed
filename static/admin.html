@@ -1,0 +1,509 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Admin - Subbed</title>
+        <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='0.9em' font-size='90'>🎬</text></svg>" />
+        <script defer src="/static/alpinejs@3.x.x.min.js"></script>
+        <style>
+            * {
+                margin: 0;
+                padding: 0;
+                box-sizing: border-box;
+            }
+
+            body {
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+                background: #0f0f0f;
+                color: #f1f1f1;
+                padding: 20px;
+            }
+
+            .container {
+                max-width: 1200px;
+                margin: 0 auto;
+            }
+
+            h1 {
+                margin-bottom: 30px;
+                font-size: 32px;
+            }
+
+            h2 {
+                margin: 30px 0 15px;
+                font-size: 24px;
+                color: #3ea6ff;
+            }
+
+            .form-group {
+                margin-bottom: 20px;
+            }
+
+            label {
+                display: block;
+                margin-bottom: 5px;
+                font-weight: 500;
+            }
+
+            input[type="text"],
+            input[type="file"],
+            select {
+                width: 100%;
+                padding: 12px;
+                font-size: 14px;
+                border: 2px solid #303030;
+                border-radius: 6px;
+                background: #1f1f1f;
+                color: #f1f1f1;
+            }
+
+            input[type="text"]:focus,
+            select:focus {
+                outline: none;
+                border-color: #3ea6ff;
+            }
+
+            button {
+                padding: 12px 24px;
+                font-size: 14px;
+                font-weight: 600;
+                border: none;
+                border-radius: 6px;
+                cursor: pointer;
+                background: #3ea6ff;
+                color: white;
+                transition: background 0.2s;
+            }
+
+            button:hover {
+                background: #2d8fd8;
+            }
+
+            button.danger {
+                background: #cc0000;
+            }
+
+            button.danger:hover {
+                background: #990000;
+            }
+
+            .video-list {
+                margin-top: 20px;
+            }
+
+            .video-item {
+                background: #1f1f1f;
+                padding: 20px;
+                border-radius: 8px;
+                margin-bottom: 15px;
+                border: 1px solid #303030;
+            }
+
+            .video-title {
+                font-size: 18px;
+                font-weight: 600;
+                margin-bottom: 8px;
+            }
+
+            .video-url {
+                color: #aaa;
+                font-size: 14px;
+                margin-bottom: 12px;
+                word-break: break-all;
+            }
+
+            .subtitle-list {
+                margin-top: 12px;
+                padding-top: 12px;
+                border-top: 1px solid #303030;
+            }
+
+            .subtitle-item {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                padding: 8px 0;
+            }
+
+            .subtitle-info {
+                font-size: 14px;
+            }
+
+            .actions {
+                display: flex;
+                gap: 10px;
+                margin-top: 12px;
+            }
+
+            .success {
+                background: #0a7c0a;
+                color: white;
+                padding: 12px;
+                border-radius: 6px;
+                margin-bottom: 20px;
+            }
+
+            .error {
+                background: #cc0000;
+                color: white;
+                padding: 12px;
+                border-radius: 6px;
+                margin-bottom: 20px;
+            }
+
+            .card {
+                background: #1a1a1a;
+                padding: 24px;
+                border-radius: 12px;
+                margin-bottom: 30px;
+                border: 1px solid #303030;
+            }
+
+            .drop-zone {
+                border: 2px dashed #303030;
+                border-radius: 8px;
+                padding: 40px;
+                text-align: center;
+                background: #1f1f1f;
+                transition: all 0.3s;
+                cursor: pointer;
+            }
+
+            .drop-zone:hover {
+                border-color: #3ea6ff;
+                background: #252525;
+            }
+
+            .drop-zone.dragging {
+                border-color: #3ea6ff;
+                background: #252525;
+                transform: scale(1.02);
+            }
+
+            .drop-zone-icon {
+                font-size: 48px;
+                margin-bottom: 16px;
+            }
+
+            .drop-zone-text {
+                color: #aaa;
+                font-size: 14px;
+                margin-bottom: 8px;
+            }
+
+            .drop-zone-hint {
+                color: #666;
+                font-size: 12px;
+            }
+
+            .file-info {
+                margin-top: 12px;
+                padding: 12px;
+                background: #252525;
+                border-radius: 6px;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+            }
+
+            .file-name {
+                color: #3ea6ff;
+                font-weight: 500;
+            }
+
+            .remove-file {
+                background: #cc0000;
+                color: white;
+                border: none;
+                padding: 6px 12px;
+                border-radius: 4px;
+                cursor: pointer;
+                font-size: 12px;
+            }
+
+            .remove-file:hover {
+                background: #990000;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="container" x-data="adminPanel()">
+            <h1>Admin Panel</h1>
+
+            <div x-show="success" class="success" x-text="success"></div>
+            <div x-show="error" class="error" x-text="error"></div>
+
+            <!-- Add New Video -->
+            <div class="card">
+                <h2>Add New Video</h2>
+                <form @submit.prevent="addVideo">
+                    <div class="form-group">
+                        <label for="video-url">YouTube URL</label>
+                        <input type="text" id="video-url" x-model="newVideo.url" required placeholder="https://youtube.com/watch?v=..." />
+                    </div>
+                    <div class="form-group">
+                        <label for="video-title">Title</label>
+                        <input type="text" id="video-title" x-model="newVideo.title" required placeholder="Video title" />
+                    </div>
+                    <button type="submit">Add Video</button>
+                </form>
+            </div>
+
+            <!-- Upload Subtitle -->
+            <div class="card">
+                <h2>Upload Subtitle</h2>
+                <form @submit.prevent="uploadSubtitle">
+                    <div class="form-group">
+                        <label for="subtitle-video">Select Video</label>
+                        <select id="subtitle-video" x-model="newSubtitle.videoId" required>
+                            <option value="">-- Select Video --</option>
+                            <template x-for="video in videos" :key="video.id">
+                                <option :value="video.id" x-text="video.title"></option>
+                            </template>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="subtitle-language">Language Code</label>
+                        <input type="text" id="subtitle-language" x-model="newSubtitle.language" required placeholder="en, es, fr, etc." />
+                    </div>
+                    <div class="form-group">
+                        <label for="subtitle-type">Subtitle Format</label>
+                        <select id="subtitle-type" x-model="newSubtitle.type" required>
+                            <option value="srt">SRT</option>
+                            <option value="vtt">VTT</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Subtitle File</label>
+                        <div
+                            class="drop-zone"
+                            :class="{ 'dragging': isDragging }"
+                            @click="$refs.fileInput.click()"
+                            @drop.prevent="handleDrop"
+                            @dragover.prevent="isDragging = true"
+                            @dragleave.prevent="isDragging = false"
+                        >
+                            <div class="drop-zone-icon">📁</div>
+                            <div class="drop-zone-text">Click to browse or drag and drop</div>
+                            <div class="drop-zone-hint">Supports .srt and .vtt files</div>
+                        </div>
+                        <input type="file" x-ref="fileInput" @change="handleFileChange" accept=".srt,.vtt" style="display: none" />
+                        <div x-show="newSubtitle.file" class="file-info">
+                            <span class="file-name" x-text="newSubtitle.file?.name"></span>
+                            <button type="button" class="remove-file" @click="removeFile">Remove</button>
+                        </div>
+                    </div>
+                    <button type="submit" :disabled="!newSubtitle.file">Upload Subtitle</button>
+                </form>
+            </div>
+
+            <!-- Video List -->
+            <div class="card">
+                <h2>Videos & Subtitles</h2>
+                <div class="video-list">
+                    <template x-for="video in videos" :key="video.id">
+                        <div class="video-item">
+                            <div class="video-title" x-text="video.title"></div>
+                            <div class="video-url" x-text="video.original_url"></div>
+
+                            <div class="subtitle-list" x-show="video.subtitles && video.subtitles.length > 0">
+                                <strong>Subtitles:</strong>
+                                <template x-for="subtitle in video.subtitles" :key="subtitle.id">
+                                    <div class="subtitle-item">
+                                        <span class="subtitle-info" x-text="`${subtitle.language.toUpperCase()} - ${subtitle.type.toUpperCase()}`"></span>
+                                        <button class="danger" @click="deleteSubtitle(subtitle.id)">Delete</button>
+                                    </div>
+                                </template>
+                            </div>
+
+                            <div class="actions">
+                                <button class="danger" @click="deleteVideo(video.id)">Delete Video</button>
+                            </div>
+                        </div>
+                    </template>
+
+                    <div x-show="videos.length === 0" style="text-align: center; padding: 40px; color: #666">No videos added yet</div>
+                </div>
+            </div>
+        </div>
+
+        <script>
+            function adminPanel() {
+                return {
+                    videos: [],
+                    newVideo: {
+                        url: "",
+                        title: "",
+                    },
+                    newSubtitle: {
+                        videoId: "",
+                        language: "",
+                        type: "srt",
+                        file: null,
+                    },
+                    success: "",
+                    error: "",
+                    isDragging: false,
+
+                    init() {
+                        this.loadVideos();
+                    },
+
+                    loadVideos() {
+                        fetch("/api/admin/videos")
+                            .then((response) => response.json())
+                            .then((data) => {
+                                this.videos = data;
+                            })
+                            .catch((err) => {
+                                this.showError("Failed to load videos");
+                            });
+                    },
+
+                    addVideo() {
+                        fetch("/api/admin/videos", {
+                            method: "POST",
+                            headers: {
+                                "Content-Type": "application/json",
+                            },
+                            body: JSON.stringify({
+                                url: this.newVideo.url,
+                                title: this.newVideo.title,
+                            }),
+                        })
+                            .then((response) => {
+                                if (!response.ok) throw new Error("Failed to add video");
+                                return response.json();
+                            })
+                            .then((data) => {
+                                this.showSuccess("Video added successfully");
+                                this.newVideo.url = "";
+                                this.newVideo.title = "";
+                                this.loadVideos();
+                            })
+                            .catch((err) => {
+                                this.showError(err.message);
+                            });
+                    },
+
+                    handleFileChange(event) {
+                        this.newSubtitle.file = event.target.files[0];
+                    },
+
+                    handleDrop(event) {
+                        this.isDragging = false;
+                        const files = event.dataTransfer.files;
+                        if (files.length > 0) {
+                            const file = files[0];
+                            // Check if file is .srt or .vtt
+                            if (file.name.endsWith(".srt") || file.name.endsWith(".vtt")) {
+                                this.newSubtitle.file = file;
+                                // Auto-detect file type
+                                this.newSubtitle.type = file.name.endsWith(".vtt") ? "vtt" : "srt";
+                            } else {
+                                this.showError("Please upload a .srt or .vtt file");
+                            }
+                        }
+                    },
+
+                    removeFile() {
+                        this.newSubtitle.file = null;
+                        if (this.$refs.fileInput) {
+                            this.$refs.fileInput.value = "";
+                        }
+                    },
+
+                    uploadSubtitle() {
+                        const formData = new FormData();
+                        formData.append("video_id", this.newSubtitle.videoId);
+                        formData.append("language", this.newSubtitle.language);
+                        formData.append("type", this.newSubtitle.type);
+                        formData.append("file", this.newSubtitle.file);
+
+                        fetch("/api/admin/subtitles", {
+                            method: "POST",
+                            body: formData,
+                        })
+                            .then((response) => {
+                                if (!response.ok) throw new Error("Failed to upload subtitle");
+                                return response.json();
+                            })
+                            .then((data) => {
+                                this.showSuccess("Subtitle uploaded successfully");
+                                this.newSubtitle.videoId = "";
+                                this.newSubtitle.language = "";
+                                this.newSubtitle.type = "srt";
+                                this.newSubtitle.file = null;
+                                if (this.$refs.fileInput) {
+                                    this.$refs.fileInput.value = "";
+                                }
+                                this.loadVideos();
+                            })
+                            .catch((err) => {
+                                this.showError(err.message);
+                            });
+                    },
+
+                    deleteVideo(id) {
+                        if (!confirm("Are you sure you want to delete this video and all its subtitles?")) {
+                            return;
+                        }
+
+                        fetch(`/api/admin/videos/${id}`, {
+                            method: "DELETE",
+                        })
+                            .then((response) => {
+                                if (!response.ok) throw new Error("Failed to delete video");
+                                return response.json();
+                            })
+                            .then((data) => {
+                                this.showSuccess("Video deleted successfully");
+                                this.loadVideos();
+                            })
+                            .catch((err) => {
+                                this.showError(err.message);
+                            });
+                    },
+
+                    deleteSubtitle(id) {
+                        if (!confirm("Are you sure you want to delete this subtitle?")) {
+                            return;
+                        }
+
+                        fetch(`/api/admin/subtitles/${id}`, {
+                            method: "DELETE",
+                        })
+                            .then((response) => {
+                                if (!response.ok) throw new Error("Failed to delete subtitle");
+                                return response.json();
+                            })
+                            .then((data) => {
+                                this.showSuccess("Subtitle deleted successfully");
+                                this.loadVideos();
+                            })
+                            .catch((err) => {
+                                this.showError(err.message);
+                            });
+                    },
+
+                    showSuccess(message) {
+                        this.success = message;
+                        this.error = "";
+                        setTimeout(() => {
+                            this.success = "";
+                        }, 3000);
+                    },
+
+                    showError(message) {
+                        this.error = message;
+                        this.success = "";
+                        setTimeout(() => {
+                            this.error = "";
+                        }, 5000);
+                    },
+                };
+            }
+        </script>
+    </body>
+</html>
