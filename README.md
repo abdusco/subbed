@@ -12,14 +12,43 @@ A YouTube video player with synchronized subtitles using Alpine.js, Go (Fiber), 
 
 ## Quick Start
 
-### Using Docker Compose (Recommended)
+### Using Docker
 
-1. Build and run:
+```bash
+docker pull ghcr.io/abdusco/subbed:latest
+docker run -d \
+  -p 3000:3000 \
+  -e ADMIN_CREDENTIALS=admin:admin \
+  -v ./data:/app/data \
+  ghcr.io/abdusco/subbed:latest
+```
+
+### Using Docker Compose
+
+1. Create a `docker-compose.yml`:
+```yaml
+version: '3.8'
+
+services:
+  subbed:
+    image: ghcr.io/abdusco/subbed:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - DATABASE_PATH=/app/data/subbed.db
+      - ADMIN_CREDENTIALS=admin:admin
+      - DEBUG=false
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+```
+
+2. Run:
 ```bash
 docker-compose up -d
 ```
 
-2. Access the application:
+3. Access the application:
    - Main app: http://localhost:3000
    - Admin panel: http://localhost:3000/admin (default: admin/admin)
 
