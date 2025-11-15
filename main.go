@@ -70,6 +70,21 @@ func run() error {
 		dbPath = "./subbed.db"
 	}
 	debug := os.Getenv("DEBUG") == "true"
+
+	// Get listen address from environment
+	listenAddr := os.Getenv("LISTEN_ADDR")
+	if listenAddr == "" {
+		host := os.Getenv("HOST")
+		if host == "" {
+			host = "127.0.0.1"
+		}
+		port := os.Getenv("PORT")
+		if port == "" {
+			port = "3000"
+		}
+		listenAddr = host + ":" + port
+	}
+
 	creds, err := newCredentialsFromEnvironment("ADMIN_CREDENTIALS")
 	if err != nil {
 		return fmt.Errorf("failed to parse admin credentials: %w", err)
@@ -169,8 +184,8 @@ func run() error {
 		}))
 	}
 
-	slog.Info("Server starting", "port", 3000)
-	if err := app.Listen(":3000"); err != nil {
+	slog.Info("Server starting", "addr", listenAddr)
+	if err := app.Listen(listenAddr); err != nil {
 		return fmt.Errorf("server failed to start: %w", err)
 	}
 

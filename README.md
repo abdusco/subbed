@@ -38,6 +38,8 @@ services:
       - DATABASE_PATH=/app/data/subbed.db
       - ADMIN_CREDENTIALS=admin:admin
       - DEBUG=false
+      - HOST=0.0.0.0  # Listen on all interfaces inside container
+      - PORT=3000
     volumes:
       - ./data:/app/data
     restart: unless-stopped
@@ -73,8 +75,30 @@ DEBUG=true ADMIN_CREDENTIALS=admin:admin go run .
 Environment variables:
 
 - `DATABASE_PATH`: SQLite database file path (default: `./subbed.db`)
-- `ADMIN_CREDENTIALS`: Admin credentials in format `username:password` (default: `admin:admin`)
+- `ADMIN_CREDENTIALS`: Admin credentials in format `username:password` (required)
 - `DEBUG`: Enable debug mode to serve static files from filesystem (default: `false`)
+- `HOST`: Interface to bind to (default: `127.0.0.1`). Use `0.0.0.0` to listen on all interfaces
+- `PORT`: Port to listen on (default: `3000`)
+- `LISTEN_ADDR`: Full listen address, overrides `HOST` and `PORT` if set (e.g., `0.0.0.0:8080`)
+
+### Listen Address Examples
+
+```bash
+# Listen on localhost only (default)
+./subbed
+
+# Listen on all interfaces
+HOST=0.0.0.0 ./subbed
+
+# Change port
+PORT=8080 ./subbed
+
+# Bind to specific interface and port
+HOST=192.168.1.100 PORT=8000 ./subbed
+
+# Or use LISTEN_ADDR for full control
+LISTEN_ADDR=0.0.0.0:8080 ./subbed
+```
 
 ## Usage
 
