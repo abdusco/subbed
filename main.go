@@ -113,8 +113,14 @@ func run() error {
 
 	// Create Fiber app
 	app := fiber.New(fiber.Config{
-		Immutable:    true,
-		ErrorHandler: customErrorHandler,
+		Immutable:             true,
+		ErrorHandler:          customErrorHandler,
+		DisableStartupMessage: true,
+	})
+	app.Hooks().OnListen(func(listen fiber.ListenData) error {
+		addr := listen.Host + ":" + listen.Port
+		slog.Info("Listening", "addr", addr)
+		return nil
 	})
 
 	// Add recover middleware to handle panics
@@ -135,21 +141,20 @@ func run() error {
 
 		logAttrs := []any{
 			"method", c.Method(),
-			"path", c.Path(),
 			"status", status,
+			"path", c.Request().URI().RequestURI(),
 			"duration", duration.String(),
 			"ip", c.IP(),
 			"user_agent", c.Get("User-Agent"),
 		}
 
-		// Log at appropriate level based on status code
+		level := slog.LevelInfo
 		if status >= 500 {
-			slog.Error("HTTP request", logAttrs...)
+			level = slog.LevelError
 		} else if status >= 400 {
-			slog.Warn("HTTP request", logAttrs...)
-		} else {
-			slog.Info("HTTP request", logAttrs...)
+			level = slog.LevelWarn
 		}
+		slog.Log(c.Context(), level, "HTTP request", logAttrs...)
 
 		return err
 	})
@@ -217,7 +222,6 @@ func run() error {
 		}))
 	}
 
-	slog.Info("Server starting", "addr", listenAddr)
 	if err := app.Listen(listenAddr); err != nil {
 		return fmt.Errorf("server failed to start: %w", err)
 	}
