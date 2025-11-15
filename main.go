@@ -2,6 +2,7 @@ package main
 
 import (
 	"embed"
+	"errors"
 	"fmt"
 	"io/fs"
 	"log/slog"
@@ -10,11 +11,11 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/basicauth"
 	"github.com/gofiber/fiber/v2/middleware/filesystem"
-	"github.com/gofiber/fiber/v2/middleware/logger"
 	"github.com/gofiber/fiber/v2/middleware/recover"
 )
 
@@ -42,11 +43,12 @@ type VideoResponse struct {
 
 // customErrorHandler handles all errors in a centralized way
 func customErrorHandler(c *fiber.Ctx, err error) error {
-	// Log the error
-	slog.Error("Request error",
-		"error", err,
-		"path", c.Path(),
-		"method", c.Method())
+	if errors.Is(err, fiber.ErrInternalServerError) {
+		slog.Error("Request error",
+			"error", err,
+			"path", c.Path(),
+			"method", c.Method())
+	}
 
 	return fiber.DefaultErrorHandler(c, err)
 }
@@ -59,17 +61,29 @@ func main() {
 }
 
 func run() error {
+	// Get debug mode first to configure logging
+	debug := os.Getenv("DEBUG") == "true"
+
 	// Initialize structured logging
-	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
-	})))
+	var handler slog.Handler
+	if debug {
+		// Human-readable text format for development
+		handler = slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+			Level: slog.LevelInfo,
+		})
+	} else {
+		// JSON format for production
+		handler = slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+			Level: slog.LevelInfo,
+		})
+	}
+	slog.SetDefault(slog.New(handler))
 
 	// Get environment variables
 	dbPath := os.Getenv("DATABASE_PATH")
 	if dbPath == "" {
 		dbPath = "./subbed.db"
 	}
-	debug := os.Getenv("DEBUG") == "true"
 
 	// Get listen address from environment
 	listenAddr := os.Getenv("LISTEN_ADDR")
@@ -108,12 +122,37 @@ func run() error {
 		EnableStackTrace: true,
 	}))
 
-	// Add logger middleware
-	app.Use(logger.New(logger.Config{
-		Format:     "[${time}] ${status} - ${method} ${path} ${latency}\n",
-		TimeFormat: "15:04:05",
-		TimeZone:   "Local",
-	}))
+	// Add custom slog logger middleware
+	app.Use(func(c *fiber.Ctx) error {
+		start := time.Now()
+
+		// Process request
+		err := c.Next()
+
+		// Log after request is complete
+		duration := time.Since(start)
+		status := c.Response().StatusCode()
+
+		logAttrs := []any{
+			"method", c.Method(),
+			"path", c.Path(),
+			"status", status,
+			"duration", duration.String(),
+			"ip", c.IP(),
+			"user_agent", c.Get("User-Agent"),
+		}
+
+		// Log at appropriate level based on status code
+		if status >= 500 {
+			slog.Error("HTTP request", logAttrs...)
+		} else if status >= 400 {
+			slog.Warn("HTTP request", logAttrs...)
+		} else {
+			slog.Info("HTTP request", logAttrs...)
+		}
+
+		return err
+	})
 
 	// Helper function to serve static files
 	serveStaticFile := func(filePath string) fiber.Handler {
