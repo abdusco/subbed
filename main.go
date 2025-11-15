@@ -20,7 +20,7 @@ import (
 )
 
 //go:embed static/*
-var staticFiles embed.FS
+var staticFS embed.FS
 
 type Video struct {
 	ID          int    `json:"id" db:"id"`
@@ -154,13 +154,12 @@ func run() error {
 		return err
 	})
 
-	// Helper function to serve static files
-	serveStaticFile := func(filePath string) fiber.Handler {
+	serveFile := func(filePath string) fiber.Handler {
 		return func(c *fiber.Ctx) error {
 			if debug {
 				return c.SendFile("./static/" + filePath)
 			}
-			content, err := staticFiles.ReadFile("static/" + filePath)
+			content, err := staticFS.ReadFile("static/" + filePath)
 			if err != nil {
 				return err
 			}
@@ -171,11 +170,10 @@ func run() error {
 
 	// Specific routes (registered first to take precedence)
 
-	// Static files (register before other routes to take precedence)
 	if debug {
 		app.Static("/static", "./static")
 	} else {
-		staticFS, err := fs.Sub(staticFiles, "static")
+		staticFS, err := fs.Sub(staticFS, "static")
 		if err != nil {
 			return fmt.Errorf("failed to load static files: %w", err)
 		}
@@ -184,13 +182,12 @@ func run() error {
 		}))
 	}
 
-	// Root route - serve index.html
-	app.Get("/", serveStaticFile("index.html"))
+	app.Get("/", serveFile("index.html"))
 
 	app.Get("/api/video", handleVideoRequest(repo))
 
 	auth := basicAuthMiddleware(creds)
-	app.Get("/admin", auth, serveStaticFile("admin.html"))
+	app.Get("/admin", auth, serveFile("admin.html"))
 
 	adminAPI := app.Group("/api/admin", auth)
 	adminAPI.Get("/videos", listVideos(repo))
@@ -199,21 +196,18 @@ func run() error {
 	adminAPI.Post("/subtitles", uploadSubtitle(repo))
 	adminAPI.Delete("/subtitles/:id", deleteSubtitle(repo))
 
-	// Handle YouTube URL routing: /$youtubeURL redirects to /?url=$youtubeURL
 	app.Get("/*", func(c *fiber.Ctx) error {
 		_, ok := youtubeURLFromPath(string(c.Request().URI().PathOriginal()))
-		if ok {
-			return serveStaticFile("index.html")(c)
+		if !ok {
+			return c.Next()
 		}
-
-		return c.Next()
+		return serveFile("index.html")(c)
 	})
 
-	// Root static file fallback (registered last)
 	if debug {
 		app.Static("/", "./static")
 	} else {
-		staticFS, err := fs.Sub(staticFiles, "static")
+		staticFS, err := fs.Sub(staticFS, "static")
 		if err != nil {
 			slog.Error("Failed to load static files", "error", err)
 			os.Exit(1)
@@ -276,7 +270,7 @@ func youtubeVideoIDFromURL(urlStr string) (string, bool) {
 	parsedURL, err := url.Parse(urlStr)
 	if err == nil {
 		// Extract video ID from different YouTube URL formats
-		if strings.Contains(parsedURL.Host, "youtube.com") || strings.Contains(parsedURL.Host, "www.youtube.com") {
+		if strings.Contains(parsedURL.Host, "youtube.com") {
 			// Standard format: youtube.com/watch?v=VIDEO_ID
 			videoID := parsedURL.Query().Get("v")
 			if videoID != "" {
