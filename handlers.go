@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/labstack/echo/v4"
 )
@@ -15,6 +16,7 @@ import (
 const (
 	maxSubtitleBytes = 2 << 20
 	maxLanguageLen   = 16
+	maxTitleLen      = 300
 )
 
 // youtubeURLFromPath extracts the YouTube URL from a player path such as /https://youtube.com/watch.
@@ -130,6 +132,39 @@ func addVideo(repo *Repository) echo.HandlerFunc {
 		}
 
 		return c.JSON(http.StatusOK, map[string]any{"id": id})
+	}
+}
+
+// updateVideo changes a video's title.
+func updateVideo(repo *Repository) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		id, err := strconv.Atoi(c.Param("id"))
+		if err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, "Invalid ID")
+		}
+
+		var req struct {
+			Title string `json:"title"`
+		}
+		if err := c.Bind(&req); err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, "Invalid request")
+		}
+		title := strings.TrimSpace(req.Title)
+		if title == "" {
+			return echo.NewHTTPError(http.StatusBadRequest, "Title is required")
+		}
+		if utf8.RuneCountInString(title) > maxTitleLen {
+			return echo.NewHTTPError(http.StatusBadRequest, "Title is too long")
+		}
+
+		found, err := repo.UpdateVideoTitle(c.Request().Context(), id, title)
+		if err != nil {
+			return err
+		}
+		if !found {
+			return echo.NewHTTPError(http.StatusNotFound, "Video not found")
+		}
+		return c.JSON(http.StatusOK, map[string]any{"id": id, "title": title})
 	}
 }
 

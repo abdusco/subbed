@@ -199,6 +199,7 @@ func newServer(cfg serverConfig) *echo.Echo {
 	admin := e.Group("/api/admin", auth)
 	admin.GET("/videos", listVideos(cfg.repo))
 	admin.POST("/videos", addVideo(cfg.repo))
+	admin.PATCH("/videos/:id", updateVideo(cfg.repo))
 	admin.DELETE("/videos/:id", deleteVideo(cfg.repo))
 	admin.POST("/subtitles", uploadSubtitle(cfg.repo))
 	admin.DELETE("/subtitles/:id", deleteSubtitle(cfg.repo))

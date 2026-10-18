@@ -220,6 +220,25 @@ func (r *Repository) DeleteVideo(ctx context.Context, id int) error {
 	return nil
 }
 
+// UpdateVideoTitle changes a video's title and reports whether the video exists
+func (r *Repository) UpdateVideoTitle(ctx context.Context, id int, title string) (bool, error) {
+	result, err := r.db.Update("videos").
+		Set(goqu.Record{"title": title}).
+		Where(goqu.C("id").Eq(id)).
+		Executor().
+		ExecContext(ctx)
+	if err != nil {
+		return false, fmt.Errorf("failed to update video: %w", err)
+	}
+
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("failed to read update result: %w", err)
+	}
+
+	return affected > 0, nil
+}
+
 // CreateSubtitle inserts a new subtitle
 func (r *Repository) CreateSubtitle(ctx context.Context, videoID int, language, subType, content string) error {
 	_, err := r.db.Insert("subtitles").

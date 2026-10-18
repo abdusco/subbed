@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -381,5 +382,61 @@ func TestOEmbedProxy(t *testing.T) {
 	upstream.Close()
 	if rec := get("https://youtu.be/jNQXAC9IVRw", true); rec.Code != 502 || errorMessage(t, rec) != "Couldn't reach YouTube" {
 		t.Errorf("upstream down: status %d body %q", rec.Code, rec.Body.String())
+	}
+}
+
+func TestUpdateVideoTitle(t *testing.T) {
+	app := newTestApp(t)
+	rec := app.addVideo("https://www.youtube.com/watch?v=jNQXAC9IVRw", "Old title")
+	var added struct{ ID int }
+	json.Unmarshal(rec.Body.Bytes(), &added)
+	target := "/api/admin/videos/" + strconv.Itoa(added.ID)
+	patch := func(target, body string, authed bool) *httptest.ResponseRecorder {
+		return app.do(http.MethodPatch, target, strings.NewReader(body), map[string]string{"Content-Type": "application/json"}, authed)
+	}
+
+	if rec := patch(target, `{"title":"New title"}`, false); rec.Code != 401 {
+		t.Fatalf("without login: status %d", rec.Code)
+	}
+	for name, tc := range map[string]struct {
+		target, body string
+		status       int
+	}{
+		"empty title":   {target, `{"title":"   "}`, 400},
+		"missing title": {target, `{}`, 400},
+		"too long":      {target, `{"title":"` + strings.Repeat("x", maxTitleLen+1) + `"}`, 400},
+		"bad json":      {target, `nope`, 400},
+		"bad id":        {"/api/admin/videos/abc", `{"title":"x"}`, 400},
+		"unknown video": {"/api/admin/videos/999", `{"title":"x"}`, 404},
+	} {
+		rec := patch(tc.target, tc.body, true)
+		if rec.Code != tc.status {
+			t.Errorf("%s: status %d, want %d (%q)", name, rec.Code, tc.status, rec.Body.String())
+			continue
+		}
+		errorMessage(t, rec)
+	}
+
+	rec = patch(target, `{"title":"  Çok güzel video  "}`, true)
+	if rec.Code != 200 {
+		t.Fatalf("update: status %d body %q", rec.Code, rec.Body.String())
+	}
+	var updated struct {
+		ID    int
+		Title string
+	}
+	json.Unmarshal(rec.Body.Bytes(), &updated)
+	if updated.ID != added.ID || updated.Title != "Çok güzel video" {
+		t.Fatalf("response = %+v", updated)
+	}
+
+	// the new title shows in the admin list and in the public API
+	rec = app.do(http.MethodGet, "/api/admin/videos", nil, nil, true)
+	if !strings.Contains(rec.Body.String(), "Çok güzel video") || strings.Contains(rec.Body.String(), "Old title") {
+		t.Fatalf("admin list: %q", rec.Body.String())
+	}
+	rec = app.do(http.MethodGet, "/api/video?url="+url.QueryEscape("https://youtu.be/jNQXAC9IVRw"), nil, nil, false)
+	if !strings.Contains(rec.Body.String(), "Çok güzel video") {
+		t.Fatalf("public video: %q", rec.Body.String())
 	}
 }
