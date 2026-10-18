@@ -17,7 +17,10 @@ import (
 	"time"
 )
 
-var testCreds = Credentials{Username: "admin", Password: "secret"}
+var (
+	testCreds = Credentials{Username: "admin", Password: "secret"}
+	testKey   = []byte("test-session-key")
+)
 
 type testApp struct {
 	t       *testing.T
@@ -49,7 +52,7 @@ func newTestAppWith(t *testing.T, oembedURL string) *testApp {
 	}
 	logs := &bytes.Buffer{}
 	logger := slog.New(slog.NewJSONHandler(logs, nil))
-	e := newServer(serverConfig{repo: repo, assets: assets, creds: testCreds, logger: logger, oembed: NewYoutubeOEmbed(nil, oembedURL)})
+	e := newServer(serverConfig{repo: repo, assets: assets, creds: testCreds, sessionKey: testKey, logger: logger, oembed: NewYoutubeOEmbed(nil, oembedURL)})
 	return &testApp{t: t, handler: e, logs: logs}
 }
 
@@ -60,7 +63,7 @@ func (a *testApp) do(method, target string, body io.Reader, headers map[string]s
 		req.Header.Set(key, value)
 	}
 	if authed {
-		token, _ := newSessions(testCreds).issue()
+		token, _ := newSessions(testCreds, testKey).issue()
 		req.AddCookie(&http.Cookie{Name: sessionCookie, Value: token})
 	}
 	rec := httptest.NewRecorder()
@@ -210,7 +213,7 @@ func TestLoginAndLogout(t *testing.T) {
 }
 
 func TestSessionTokens(t *testing.T) {
-	sessions := newSessions(testCreds)
+	sessions := newSessions(testCreds, testKey)
 	token, _ := sessions.issue()
 	if !sessions.valid(token) {
 		t.Fatal("a fresh token should be valid")
@@ -223,8 +226,8 @@ func TestSessionTokens(t *testing.T) {
 		"tampered":     expiry + "." + strings.Repeat("0", len(signature)),
 		"later expiry": "99999999999." + signature,
 		"not a number": "x." + sessions.sign("x"),
-		"other password": func() string {
-			other, _ := newSessions(Credentials{Username: "admin", Password: "other"}).issue()
+		"other key": func() string {
+			other, _ := newSessions(testCreds, []byte("another-key")).issue()
 			return other
 		}(),
 	} {
@@ -233,10 +236,30 @@ func TestSessionTokens(t *testing.T) {
 		}
 	}
 
-	later := newSessions(testCreds)
+	later := newSessions(testCreds, testKey)
 	later.now = func() time.Time { return time.Now().Add(sessionTTL + time.Minute) }
 	if later.valid(token) {
 		t.Fatal("an expired token should be rejected")
+	}
+}
+
+func TestSessionKeyFromEnvironment(t *testing.T) {
+	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
+
+	t.Setenv("TEST_SESSION_SECRET", "from-env")
+	key, err := sessionKeyFromEnvironment("TEST_SESSION_SECRET", logger)
+	if err != nil || string(key) != "from-env" {
+		t.Fatalf("key = %q, err = %v, want the env value", key, err)
+	}
+
+	t.Setenv("TEST_SESSION_SECRET", "")
+	first, err := sessionKeyFromEnvironment("TEST_SESSION_SECRET", logger)
+	if err != nil || len(first) < 32 {
+		t.Fatalf("random key = %d bytes, err = %v, want at least 32 bytes", len(first), err)
+	}
+	second, _ := sessionKeyFromEnvironment("TEST_SESSION_SECRET", logger)
+	if bytes.Equal(first, second) {
+		t.Fatal("random keys should differ between calls")
 	}
 }
 

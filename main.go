@@ -130,7 +130,12 @@ func run() error {
 		return err
 	}
 
-	e := newServer(serverConfig{repo: repo, assets: assets, creds: creds, debug: debug, logger: logger})
+	sessionKey, err := sessionKeyFromEnvironment("SESSION_SECRET", logger)
+	if err != nil {
+		return err
+	}
+
+	e := newServer(serverConfig{repo: repo, assets: assets, creds: creds, sessionKey: sessionKey, debug: debug, logger: logger})
 
 	addr := listenAddress()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -160,9 +165,11 @@ type serverConfig struct {
 	repo   *Repository
 	assets fs.FS
 	creds  Credentials
-	debug  bool
-	logger *slog.Logger
-	oembed *YoutubeOEmbed
+	// sessionKey signs the session cookies
+	sessionKey []byte
+	debug      bool
+	logger     *slog.Logger
+	oembed     *YoutubeOEmbed
 }
 
 // newServer builds the HTTP server with all routes and middleware.
@@ -183,7 +190,7 @@ func newServer(cfg serverConfig) *echo.Echo {
 	}))
 	e.Use(middleware.BodyLimit(maxRequestBody))
 
-	session := newSessions(cfg.creds)
+	session := newSessions(cfg.creds, cfg.sessionKey)
 	adminPage := session.requireSession(true)
 	adminAPI := session.requireSession(false)
 

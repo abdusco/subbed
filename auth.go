@@ -2,10 +2,14 @@ package main
 
 import (
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
+	"fmt"
+	"log/slog"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -21,17 +25,33 @@ const (
 )
 
 // sessions issues and checks signed session cookies. A token is "<expiry unix>.<hex hmac>": nothing is stored on the
-// server. The signing key is derived from the credentials, so changing the username or password signs everyone out.
+// server, so a new signing key signs everyone out.
 type sessions struct {
 	creds Credentials
 	key   []byte
 	now   func() time.Time
 }
 
-func newSessions(creds Credentials) *sessions {
-	mac := hmac.New(sha256.New, []byte(creds.Password))
-	mac.Write([]byte("subbed-session:" + creds.Username))
-	return &sessions{creds: creds, key: mac.Sum(nil), now: time.Now}
+func newSessions(creds Credentials, key []byte) *sessions {
+	if len(key) == 0 {
+		// an empty HMAC key would let anyone forge a session
+		panic("session key must not be empty")
+	}
+	return &sessions{creds: creds, key: key, now: time.Now}
+}
+
+// sessionKeyFromEnvironment returns the signing key from envVar, or a random one if it is unset. A random key only
+// lasts until the process restarts, which signs everyone out.
+func sessionKeyFromEnvironment(envVar string, logger *slog.Logger) ([]byte, error) {
+	if secret := os.Getenv(envVar); secret != "" {
+		return []byte(secret), nil
+	}
+	key := make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
+		return nil, fmt.Errorf("failed to generate a session key: %w", err)
+	}
+	logger.Info("Using a random session key, sign-ins end when the server restarts", "env", envVar)
+	return key, nil
 }
 
 func (s *sessions) sign(expiry string) string {
