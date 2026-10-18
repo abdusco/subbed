@@ -1,502 +1,236 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
     <head>
         <meta charset="UTF-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-        <meta name="mobile-web-app-capable" content="yes" />
-        <meta name="apple-mobile-web-app-capable" content="yes" />
-        <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-        <title>Subbed - YouTube with Subtitles</title>
-        <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='0.9em' font-size='90'>🎬</text></svg>" />
+        <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+        <title>Subbed</title>
+        <meta name="description" content="Watch YouTube videos with your own subtitles." />
+        <meta name="theme-color" content="#f6f5fb" media="(prefers-color-scheme: light)" />
+        <meta name="theme-color" content="#0e0d14" media="(prefers-color-scheme: dark)" />
+        <link rel="icon" type="image/svg+xml" href="/static/player/icon.svg" />
+        <link rel="stylesheet" href="/static/player/player.css" />
+        <script>
+            // apply the saved appearance before first paint
+            try {
+                const theme = localStorage.getItem("subbed-player-theme");
+                if (theme === "light" || theme === "dark") document.documentElement.dataset.theme = theme;
+            } catch {}
+        </script>
+        <!-- the component module must come before Alpine so its alpine:init listener is registered in time -->
+        <script type="module" src="/static/player/app.js"></script>
         <script defer src="/static/alpinejs@3.x.x.min.js"></script>
-        <style>
-            * {
-                margin: 0;
-                padding: 0;
-                box-sizing: border-box;
-            }
-
-            html,
-            body {
-                width: 100%;
-                height: 100%;
-                overflow-x: hidden;
-                -webkit-overflow-scrolling: touch;
-            }
-
-            body {
-                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-                background: #0f0f0f;
-                color: #f1f1f1;
-                padding: 20px;
-                -webkit-text-size-adjust: 100%;
-            }
-
-            .container {
-                max-width: 1400px;
-                margin: 0 auto;
-            }
-
-            h1 {
-                margin-bottom: 30px;
-                font-size: 32px;
-                text-align: center;
-            }
-
-            .input-group {
-                margin-bottom: 30px;
-            }
-
-            input[type="url"] {
-                width: 100%;
-                padding: 15px;
-                font-size: 16px;
-                border: 2px solid #303030;
-                border-radius: 8px;
-                background: #1f1f1f;
-                color: #f1f1f1;
-                -webkit-appearance: none;
-                appearance: none;
-            }
-
-            input[type="url"]:focus {
-                outline: none;
-                border-color: #3ea6ff;
-            }
-
-            .video-wrapper {
-                position: relative;
-                width: 100%;
-                aspect-ratio: 16 / 9;
-                background: black;
-            }
-
-            iframe {
-                position: absolute;
-                top: 0;
-                left: 0;
-                width: 100%;
-                height: 100%;
-                border: none;
-            }
-
-            .subtitle-overlay {
-                position: absolute;
-                bottom: 10px;
-                left: 50%;
-                transform: translateX(-50%);
-                background: rgba(0, 0, 0, 0.2);
-                color: white;
-                padding: 0.5rem 1rem;
-                border-radius: 0.5rem;
-                font-size: 20px;
-                line-height: 1.4;
-                text-align: center;
-                width: 100%;
-                max-width: 90%;
-                z-index: 10;
-                pointer-events: none;
-                display: none;
-            }
-
-            .subtitle-overlay.active {
-                display: block;
-            }
-
-            .subtitle-overlay strong {
-                font-weight: bold;
-            }
-
-            .subtitle-overlay em {
-                font-style: italic;
-            }
-
-            .error {
-                background: #cc0000;
-                color: white;
-                padding: 15px;
-                border-radius: 8px;
-                margin-bottom: 20px;
-            }
-
-            .loading {
-                text-align: center;
-                padding: 20px;
-                color: #aaa;
-            }
-
-            /* Mobile optimizations */
-            @media screen and (max-width: 768px) {
-                body {
-                    padding: 10px;
-                }
-
-                h1 {
-                    font-size: 24px;
-                    margin-bottom: 20px;
-                }
-
-                input[type="url"] {
-                    font-size: 16px; /* Prevents zoom on iOS */
-                    padding: 12px;
-                }
-
-                .subtitle-overlay {
-                    font-size: 16px;
-                    padding: 0.4rem 0.8rem;
-                }
-            }
-
-            /* Landscape mode on mobile */
-            @media screen and (max-width: 896px) and (orientation: landscape) {
-                body {
-                    padding: 5px;
-                    overflow: hidden;
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                }
-
-                h1 {
-                    font-size: 18px;
-                    margin-bottom: 10px;
-                }
-
-                .input-group {
-                    margin-bottom: 10px;
-                }
-
-                input[type="url"] {
-                    padding: 8px;
-                    font-size: 14px;
-                }
-
-                .container {
-                    width: 100%;
-                    height: 100vh;
-                    display: flex;
-                    flex-direction: column;
-                    justify-content: center;
-                    align-items: center;
-                }
-
-                .video-wrapper {
-                    position: relative;
-                    width: auto;
-                    height: 90vh;
-                    max-width: 90vw;
-                    padding-bottom: 0;
-                    aspect-ratio: 16 / 9;
-                    margin: 0 auto;
-                }
-
-                .subtitle-overlay {
-                    bottom: 20px;
-                    font-size: 18px;
-                    padding: 0.5rem 0.8rem;
-                    max-width: 85%;
-                    line-height: 1.5;
-                }
-            }
-
-            /* Landscape mode on high DPI screens (Retina, etc.) */
-            @media screen and (max-width: 896px) and (orientation: landscape) and (-webkit-min-device-pixel-ratio: 2),
-                screen and (max-width: 896px) and (orientation: landscape) and (min-resolution: 192dpi) {
-                .subtitle-overlay {
-                    bottom: 20px;
-                    font-size: 20px;
-                    padding: 0.6rem 1rem;
-                }
-            }
-
-            /* Very small landscape phones */
-            @media screen and (max-height: 500px) and (orientation: landscape) {
-                h1,
-                .input-group {
-                    display: none;
-                }
-
-                body {
-                    padding: 2px;
-                }
-
-                .container {
-                    height: 100vh;
-                }
-
-                .video-wrapper {
-                    height: calc(100vh - 4px);
-                    margin-bottom: 0;
-                }
-
-                .subtitle-overlay {
-                    bottom: 20px;
-                    font-size: 16px;
-                    padding: 0.4rem 0.7rem;
-                }
-            }
-        </style>
     </head>
-    <body>
-        <div class="container" x-data="videoApp()">
-            <h1 x-show="video.title" x-text="video.title"></h1>
+    <body x-data="player" x-cloak>
+        <svg width="0" height="0" style="position: absolute" aria-hidden="true">
+            <defs>
+                <symbol id="i-sliders" viewBox="0 0 24 24">
+                    <path d="M3 6h10M21 6h-4M3 12h4M21 12H11M3 18h10M21 18h-4" />
+                    <circle cx="15" cy="6" r="2" />
+                    <circle cx="9" cy="12" r="2" />
+                    <circle cx="15" cy="18" r="2" />
+                </symbol>
+                <symbol id="i-sun" viewBox="0 0 24 24">
+                    <circle cx="12" cy="12" r="4" />
+                    <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />
+                </symbol>
+                <symbol id="i-moon" viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" /></symbol>
+                <symbol id="i-monitor" viewBox="0 0 24 24">
+                    <rect x="3" y="4" width="18" height="12" rx="2" />
+                    <path d="M8 20h8M12 16v4" />
+                </symbol>
+                <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14" /></symbol>
+                <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></symbol>
+                <symbol id="i-maximize" viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" /></symbol>
+                <symbol id="i-minimize" viewBox="0 0 24 24"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5" /></symbol>
+                <symbol id="i-alert" viewBox="0 0 24 24">
+                    <circle cx="12" cy="12" r="9" />
+                    <path d="M12 7v6M12 16.5v.5" />
+                </symbol>
+                <symbol id="i-info" viewBox="0 0 24 24">
+                    <circle cx="12" cy="12" r="9" />
+                    <path d="M12 11v6M12 7.5v.5" />
+                </symbol>
+                <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></symbol>
+            </defs>
+        </svg>
 
-            <form class="input-group" x-show="!inputFromURL" @submit.prevent="loadVideo">
-                <input type="url" x-model="url" placeholder="Enter YouTube URL (e.g., https://youtube.com/watch?v=dQw4w9WgXcQ)" />
-            </form>
+        <noscript><p style="padding: 24px">Subbed needs JavaScript.</p></noscript>
 
-            <div x-show="error" class="error" x-text="error"></div>
-            <div x-show="loading" class="loading">Loading...</div>
+        <header class="topbar">
+            <a class="brand" href="/" :aria-label="t('nav.home')">
+                <img src="/static/player/icon.svg" alt="" width="32" height="32" />
+                <span>Subbed</span>
+            </a>
+            <button
+                class="btn btn-ghost btn-icon"
+                type="button"
+                popovertarget="settings"
+                :aria-label="t('settings.title')"
+                :title="t('settings.title')"
+            >
+                <svg class="icon"><use href="#i-sliders" /></svg>
+            </button>
+        </header>
 
-            <div x-show="player">
-                <div class="video-wrapper">
-                    <div id="player"></div>
-                    <div class="subtitle-overlay" :class="{ active: currentSubtitle }" x-html="currentSubtitle"></div>
+        <div id="settings" class="settings" popover>
+            <h2 x-text="t('settings.title')"></h2>
+            <label class="field">
+                <span x-text="t('settings.language')"></span>
+                <select :value="languagePreference" @change="setLanguage($event.target.value)">
+                    <option value="auto" x-text="t('settings.languageAuto')"></option>
+                    <option value="en">English</option>
+                    <option value="tr">Türkçe</option>
+                </select>
+            </label>
+            <div class="field" role="group" aria-labelledby="theme-label">
+                <span id="theme-label" x-text="t('settings.theme')"></span>
+                <div class="segmented">
+                    <button type="button" :aria-pressed="themePreference === 'system'" @click="setTheme('system')">
+                        <svg class="icon"><use href="#i-monitor" /></svg>
+                        <span x-text="t('theme.system')"></span>
+                    </button>
+                    <button type="button" :aria-pressed="themePreference === 'light'" @click="setTheme('light')">
+                        <svg class="icon"><use href="#i-sun" /></svg>
+                        <span x-text="t('theme.light')"></span>
+                    </button>
+                    <button type="button" :aria-pressed="themePreference === 'dark'" @click="setTheme('dark')">
+                        <svg class="icon"><use href="#i-moon" /></svg>
+                        <span x-text="t('theme.dark')"></span>
+                    </button>
                 </div>
             </div>
         </div>
 
-        <script>
-            /** Load YouTube IFrame API dynamically
-             * @returns {Promise} - Resolves when the API is ready
-             */
-            function initYoutube() {
-                return new Promise((resolve) => {
-                    if (window.YT && window.YT.Player) {
-                        resolve();
-                        return;
-                    }
+        <main>
+            <section class="hero" x-show="!videoId && !loading">
+                <h1 x-text="t('hero.title')"></h1>
+                <p x-text="t('hero.hint')"></p>
+                <form class="url-form" @submit="submit($event)">
+                    <label class="sr-only" for="url" x-text="t('url.label')"></label>
+                    <input
+                        id="url"
+                        type="text"
+                        inputmode="url"
+                        x-model="inputUrl"
+                        :placeholder="t('url.placeholder')"
+                        autocomplete="off"
+                        required
+                    />
+                    <button class="btn btn-primary" type="submit">
+                        <svg class="icon"><use href="#i-play" /></svg>
+                        <span x-text="t('url.play')"></span>
+                    </button>
+                </form>
+            </section>
 
-                    // Set up callback for when API is ready
-                    window.onYouTubeIframeAPIReady = () => {
-                        resolve();
-                    };
+            <div class="notice notice-error" x-show="error" role="alert">
+                <svg class="icon"><use href="#i-alert" /></svg>
+                <span x-text="errorText"></span>
+                <button
+                    class="btn btn-ghost"
+                    type="button"
+                    x-show="error?.key !== 'error.invalid'"
+                    @click="loadVideo(inputUrl, { updateHistory: false })"
+                    x-text="t('error.retry')"
+                ></button>
+            </div>
 
-                    const script = document.createElement("script");
-                    script.src = "https://www.youtube.com/iframe_api";
-                    script.async = true;
-                    document.head.appendChild(script);
-                });
-            }
+            <div class="status" x-show="loading" role="status">
+                <span class="spinner"></span>
+                <span x-text="t('status.loading')"></span>
+            </div>
 
-            /** Extract YouTube video ID from various URL formats
-             * @param {string} url - The YouTube URL or video ID
-             * @returns {string|null} - The extracted video ID or null if invalid
-             */
-            function extractYoutubeId(url) {
-                const patterns = [/(?:youtube\.com\/watch\?v=|youtu\.be\/)([^&\s]+)/, /^([a-zA-Z0-9_-]{11})$/];
+            <div x-show="videoId">
+                <h1 class="title" x-show="title" x-text="title"></h1>
 
-                for (let pattern of patterns) {
-                    const match = url.match(pattern);
-                    if (match) return match[1];
-                }
-                return null;
-            }
+                <div class="notice" x-show="videoId && tracks.length === 0 && !loading">
+                    <svg class="icon"><use href="#i-info" /></svg>
+                    <span x-text="t('notice.noSubtitles')"></span>
+                </div>
 
-            /* Parse SRT subtitle content into an array of subtitle objects
-             * @param {string} content - The SRT file content
-             * @returns {[]{start: number, end: number, text: string}} - Array of subtitle objects
-             */
-            function parseSRTSubtitles(content) {
-                const timeToSeconds = (timeStr) => {
-                    // Convert SRT timestamp (00:00:00,000) to seconds
-                    const parts = timeStr.replace(",", ".").split(":");
-                    if (parts.length === 3) {
-                        return parseFloat(parts[0]) * 3600 + parseFloat(parts[1]) * 60 + parseFloat(parts[2]);
-                    }
-                    return 0;
-                };
+                <div class="stage" x-ref="stage">
+                    <div class="frame" :style="{ '--subtitle-scale': scale }">
+                        <div x-ref="mount"></div>
+                        <div class="subtitle" aria-live="off" x-html="cueHtml"></div>
+                    </div>
+                </div>
 
-                const lines = content.split("\n");
-                const parsed = [];
-                let i = 0;
+                <div class="toolbar">
+                    <label class="field" x-show="tracks.length > 0">
+                        <span x-text="t('subtitles.label')"></span>
+                        <select x-model="trackId" @change="onTrackChange()">
+                            <template x-for="item in tracks" :key="item.id">
+                                <option :value="item.id" x-text="item.label"></option>
+                            </template>
+                            <option value="off" x-text="t('subtitles.off')"></option>
+                        </select>
+                    </label>
 
-                while (i < lines.length) {
-                    // Skip empty lines
-                    if (!lines[i].trim()) {
-                        i++;
-                        continue;
-                    }
+                    <div class="field" role="group" x-show="tracks.length > 0" aria-labelledby="size-label">
+                        <span id="size-label" x-text="t('size.label')"></span>
+                        <div class="stepper">
+                            <button
+                                class="btn btn-ghost btn-icon"
+                                type="button"
+                                :aria-label="t('size.smaller')"
+                                :title="t('size.smaller')"
+                                :disabled="sizeIndex === 0"
+                                @click="bumpSize(-1)"
+                            >
+                                <svg class="icon"><use href="#i-minus" /></svg>
+                            </button>
+                            <span class="value" x-text="`${Math.round(scale * 100)}%`"></span>
+                            <button
+                                class="btn btn-ghost btn-icon"
+                                type="button"
+                                :aria-label="t('size.larger')"
+                                :title="t('size.larger')"
+                                :disabled="scale >= 1.75"
+                                @click="bumpSize(1)"
+                            >
+                                <svg class="icon"><use href="#i-plus" /></svg>
+                            </button>
+                        </div>
+                    </div>
 
-                    // Skip subtitle number
-                    if (/^\d+$/.test(lines[i].trim())) {
-                        i++;
-                    }
+                    <div class="field" role="group" x-show="tracks.length > 0" aria-labelledby="delay-label">
+                        <span id="delay-label" x-text="t('delay.label')"></span>
+                        <div class="stepper">
+                            <button
+                                class="btn btn-ghost btn-icon"
+                                type="button"
+                                :aria-label="t('delay.earlier')"
+                                :title="t('delay.earlier')"
+                                @click="bumpDelay(-1)"
+                            >
+                                <svg class="icon"><use href="#i-minus" /></svg>
+                            </button>
+                            <button
+                                class="value"
+                                type="button"
+                                :title="t('delay.reset')"
+                                :aria-label="`${t('delay.reset')}: ${delayLabel}`"
+                                x-text="delayLabel"
+                                @click="resetDelay()"
+                            ></button>
+                            <button
+                                class="btn btn-ghost btn-icon"
+                                type="button"
+                                :aria-label="t('delay.later')"
+                                :title="t('delay.later')"
+                                @click="bumpDelay(1)"
+                            >
+                                <svg class="icon"><use href="#i-plus" /></svg>
+                            </button>
+                        </div>
+                    </div>
 
-                    // Parse timestamp
-                    if (lines[i] && lines[i].includes("-->")) {
-                        const [start, end] = lines[i].split("-->").map((t) => timeToSeconds(t.trim()));
-                        i++;
-
-                        // Collect text lines
-                        let text = "";
-                        while (i < lines.length && lines[i].trim() && !lines[i].includes("-->")) {
-                            text += (text ? " " : "") + lines[i].trim();
-                            i++;
-                        }
-
-                        if (text) {
-                            parsed.push({ start, end, text });
-                        }
-                    } else {
-                        i++;
-                    }
-                }
-
-                return parsed;
-            }
-
-            function videoApp() {
-                return {
-                    url: "",
-                    video: {},
-                    error: "",
-                    loading: false,
-                    currentSubtitle: "",
-                    player: null,
-                    _subInterval: null,
-                    inputFromURL: false,
-
-                    async init() {
-                        // Load YouTube API
-                        await initYoutube();
-
-                        // Check if URL contains a link
-                        let url = window.location.href.replace(window.location.origin, "").replace(/^\//, "").trim();
-                        url = url.replace(/https:\/*/, "https://");
-
-                        if (url) {
-                            this.url = url;
-                            this.inputFromURL = true;
-                            // Auto-load the video
-                            this.$nextTick(() => {
-                                this.loadVideo();
-                            });
-                        }
-                    },
-
-                    async loadVideo() {
-                        history.replaceState(null, "", location.origin + "/" + this.url);
-
-                        this.error = "";
-                        const videoId = extractYoutubeId(this.url);
-                        if (!videoId) {
-                            this.error = "Invalid YouTube URL";
-                            return;
-                        }
-
-                        this.loading = false;
-                        try {
-                            // Fetch subtitle data from backend
-                            const response = await fetch(`/api/video?url=${encodeURIComponent(this.url)}`);
-
-                            if (!response.ok) {
-                                throw new Error("Video not found or no subtitles available");
-                            }
-
-                            const data = await response.json();
-                            this.video = data.video;
-                            this.subtitles = parseSRTSubtitles(data.subtitles[0].content);
-
-                            // Initialize YouTube player
-                            await this.$nextTick();
-                            const hasCustomSubtitles = !!this.subtitles?.length;
-                            await this.initPlayer(videoId, !hasCustomSubtitles);
-                        } catch (err) {
-                            this.error = err.message;
-                        } finally {
-                            this.loading = false;
-                        }
-                    },
-
-                    async initPlayer(videoId, withSubtitles = false) {
-                        return new Promise((resolve) => {
-                            if (this.player) {
-                                this.player.destroy();
-                            }
-
-                            this.player = new YT.Player("player", {
-                                videoId,
-                                playerVars: {
-                                    controls: 1,
-                                    autoplay: 0,
-                                    // disable related videos at the end
-                                    rel: 0,
-                                    ...(withSubtitles && {
-                                        cc_load_policy: 1,
-                                        cc_lang_pref: "en",
-                                    }),
-                                },
-                                events: {
-                                    onStateChange: (event) => this.onPlayerStateChange(event),
-                                    onReady: (event) => {
-                                        // Only unload captions if we have custom subtitles
-                                        if (!withSubtitles) {
-                                            try {
-                                                event.target.unloadModule("captions");
-                                                event.target.unloadModule("cc");
-                                            } catch (e) {
-                                                // Ignore errors if modules don't exist
-                                            }
-                                        }
-                                        resolve(event.target);
-                                    },
-                                },
-                            });
-                        });
-                    },
-
-                    onPlayerStateChange(event) {
-                        if (event.data === YT.PlayerState.PLAYING) {
-                            this.startSubtitleSync();
-                        } else {
-                            this.stopSubtitleSync();
-                        }
-                    },
-
-                    startSubtitleSync() {
-                        if (this._subInterval) {
-                            clearInterval(this._subInterval);
-                        }
-
-                        this._subInterval = setInterval(() => {
-                            if (this.player && this.player.getCurrentTime) {
-                                const currentTime = this.player.getCurrentTime();
-                                this.updateSubtitle(currentTime);
-                            }
-                        }, 100);
-                    },
-
-                    stopSubtitleSync() {
-                        if (this._subInterval) {
-                            clearInterval(this._subInterval);
-                            this._subInterval = null;
-                        }
-                    },
-
-                    updateSubtitle(currentTime) {
-                        const subtitle = this.subtitles.find((sub) => currentTime >= sub.start && currentTime <= sub.end);
-
-                        this.currentSubtitle = subtitle ? this.formatMarkdown(subtitle.text) : "";
-                    },
-
-                    formatMarkdown(text) {
-                        // Escape HTML to prevent XSS
-                        text = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-
-                        // Convert markdown to HTML
-                        // Bold: **text** or __text__
-                        text = text.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
-                        text = text.replace(/__(.+?)__/g, "<strong>$1</strong>");
-
-                        // Italic: *text* or _text_ (but not part of __ or **)
-                        text = text.replace(/(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)/g, "<em>$1</em>");
-                        text = text.replace(/(?<!_)_(?!_)(.+?)(?<!_)_(?!_)/g, "<em>$1</em>");
-
-                        return text;
-                    },
-                };
-            }
-        </script>
+                    <button class="btn btn-ghost spacer" type="button" x-show="canFullscreen" @click="toggleFullscreen()">
+                        <svg class="icon"><use :href="fullscreen ? '#i-minimize' : '#i-maximize'" /></svg>
+                        <span x-text="fullscreen ? t('fullscreen.exit') : t('fullscreen.enter')"></span>
+                    </button>
+                </div>
+            </div>
+        </main>
     </body>
 </html>

@@ -174,3 +174,9 @@ Admin API (requires basic auth):
 ## Development
 
 The application embeds static files in the binary for production. Set `DEBUG=true` to serve files from `./static` directory for development. Structured logging (slog) with JSON output is used throughout.
+
+The admin page (`/admin`) is an installable PWA with an offline app shell: bump `SHELL_VERSION` in `static/admin-sw.js` whenever a file it caches changes. Frontend logic that doesn't need a browser has unit tests:
+
+```bash
+node --test tests/*.mjs
+```

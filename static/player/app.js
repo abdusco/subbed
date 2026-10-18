@@ -1,0 +1,409 @@
+import { resolveLanguage, translate } from "./i18n.js";
+import { cueAt, parseSubtitles, renderCue, urlFromLocation, videoIdFromUrl } from "./subtitles.js";
+
+/** @typedef {import("./subtitles.js").Cue} Cue */
+/** @typedef {{ id: string, language: string, label: string, cues: Cue[] }} Track */
+/** @typedef {"system" | "light" | "dark"} ThemePreference */
+/** @typedef {{ key: string, params?: Record<string, string | number> }} Message */
+
+const STORAGE_KEYS = {
+    theme: "subbed-player-theme",
+    language: "subbed-player-language",
+    size: "subbed-player-subtitle-size",
+    subtitleLanguage: "subbed-player-subtitle-language",
+};
+const SIZE_STEPS = [0.75, 0.9, 1, 1.15, 1.3, 1.5, 1.75];
+const DEFAULT_SIZE_INDEX = 2;
+const DELAY_STEP_SECONDS = 0.5;
+const DELAY_LIMIT_SECONDS = 30;
+const SYNC_INTERVAL_MS = 100;
+const OFF = "off";
+
+const storage = {
+    /**
+     * @param {string} key
+     * @returns {string | null}
+     */
+    get(key) {
+        try {
+            return localStorage.getItem(key);
+        } catch {
+            return null;
+        }
+    },
+    /**
+     * @param {string} key
+     * @param {string | null} value null removes the key
+     */
+    set(key, value) {
+        try {
+            if (value === null) localStorage.removeItem(key);
+            else localStorage.setItem(key, value);
+        } catch {
+            // preferences simply won't persist
+        }
+    },
+};
+
+// The YouTube player and timers live outside Alpine so they are never wrapped in reactive proxies.
+/** @type {any} */
+let player = null;
+let syncTimer = 0;
+/** @type {Cue | null} */
+let shownCue = null;
+/** @type {Promise<void> | null} */
+let youtubeApi = null;
+
+/**
+ * Load the YouTube IFrame API once.
+ * @returns {Promise<void>}
+ */
+function loadYoutubeApi() {
+    // @ts-ignore YT is a global from the YouTube script
+    if (window.YT?.Player) return Promise.resolve();
+    youtubeApi ??= new Promise((resolve, reject) => {
+        // @ts-ignore
+        window.onYouTubeIframeAPIReady = () => resolve();
+        const script = document.createElement("script");
+        script.src = "https://www.youtube.com/iframe_api";
+        script.async = true;
+        script.onerror = () => {
+            youtubeApi = null;
+            reject(new Error("YouTube API failed to load"));
+        };
+        document.head.appendChild(script);
+    });
+    return youtubeApi;
+}
+
+/**
+ * Apply the theme to <html> and keep the browser UI color in sync with the page background.
+ * @param {ThemePreference} theme
+ */
+function applyTheme(theme) {
+    const root = document.documentElement;
+    if (theme === "system") delete root.dataset.theme;
+    else root.dataset.theme = theme;
+    requestAnimationFrame(() => {
+        const [first, ...rest] = document.querySelectorAll('meta[name="theme-color"]');
+        rest.forEach((meta) => meta.remove());
+        first?.removeAttribute("media");
+        first?.setAttribute("content", getComputedStyle(document.body).backgroundColor);
+    });
+}
+
+document.addEventListener("alpine:init", () => {
+    // @ts-ignore Alpine is a global from the vendored script
+    Alpine.data("player", () => ({
+        inputUrl: "",
+        loading: false,
+        /** @type {Message | null} */
+        error: null,
+        videoId: "",
+        title: "",
+        /** @type {Track[]} */
+        tracks: [],
+        trackId: OFF,
+        cueHtml: "",
+        sizeIndex: Math.min(Math.max(Number(storage.get(STORAGE_KEYS.size) ?? DEFAULT_SIZE_INDEX), 0), SIZE_STEPS.length - 1),
+        delay: 0,
+        fullscreen: false,
+        canFullscreen: Boolean(document.fullscreenEnabled),
+        themePreference: /** @type {ThemePreference} */ (storage.get(STORAGE_KEYS.theme) ?? "system"),
+        languagePreference: storage.get(STORAGE_KEYS.language) ?? "auto",
+
+        // ---- lifecycle ----
+
+        init() {
+            if (!["system", "light", "dark"].includes(this.themePreference)) this.themePreference = "system";
+            if (!Number.isInteger(this.sizeIndex)) this.sizeIndex = DEFAULT_SIZE_INDEX;
+            applyTheme(this.themePreference);
+            matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => applyTheme(this.themePreference));
+            this.$watch("lang", (language) => (document.documentElement.lang = language));
+            document.documentElement.lang = this.lang;
+
+            document.addEventListener("fullscreenchange", () => (this.fullscreen = Boolean(document.fullscreenElement)));
+            window.addEventListener("popstate", () => this.route());
+            window.addEventListener("paste", (event) => this.onPaste(event));
+            window.addEventListener("pagehide", () => this.stopSync());
+
+            this.route();
+        },
+
+        /** Load whatever video the address bar names, or show the start page. */
+        route() {
+            const url = urlFromLocation(location.pathname + location.search);
+            if (url) this.loadVideo(url, { updateHistory: false });
+            else this.reset();
+        },
+
+        reset() {
+            this.disposePlayer();
+            this.videoId = "";
+            this.title = "";
+            this.tracks = [];
+            this.trackId = OFF;
+            this.error = null;
+            this.loading = false;
+            document.title = "Subbed";
+        },
+
+        // ---- i18n and theme ----
+
+        get lang() {
+            return resolveLanguage(this.languagePreference, navigator.languages ?? [navigator.language]);
+        },
+
+        /**
+         * @param {string} key
+         * @param {Record<string, string | number>} [params]
+         * @returns {string}
+         */
+        t(key, params) {
+            return translate(this.lang, key, params);
+        },
+
+        get errorText() {
+            return this.error ? this.t(this.error.key, this.error.params) : "";
+        },
+
+        /** @param {string} value "auto", "en" or "tr" */
+        setLanguage(value) {
+            this.languagePreference = value;
+            storage.set(STORAGE_KEYS.language, value === "auto" ? null : value);
+        },
+
+        /** @param {ThemePreference} value */
+        setTheme(value) {
+            this.themePreference = value;
+            storage.set(STORAGE_KEYS.theme, value === "system" ? null : value);
+            applyTheme(value);
+        },
+
+        // ---- loading a video ----
+
+        /** @param {SubmitEvent} event */
+        submit(event) {
+            event.preventDefault();
+            this.loadVideo(this.inputUrl.trim(), { updateHistory: true });
+        },
+
+        /** @param {ClipboardEvent} event */
+        onPaste(event) {
+            const target = event.target;
+            if (target instanceof HTMLElement && (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)))
+                return;
+            const text = event.clipboardData?.getData("text/plain") ?? "";
+            if (!videoIdFromUrl(text)) return;
+            event.preventDefault();
+            this.loadVideo(text.trim(), { updateHistory: true });
+        },
+
+        /**
+         * Fetch the library entry for a video, then start the player.
+         * @param {string} raw a YouTube URL or video id
+         * @param {{ updateHistory: boolean }} options
+         */
+        async loadVideo(raw, { updateHistory }) {
+            const id = videoIdFromUrl(raw);
+            this.error = null;
+            if (!id) {
+                this.disposePlayer();
+                this.videoId = "";
+                this.error = { key: "error.invalid" };
+                return;
+            }
+            // the API and the address bar both use one canonical URL, whatever shape the user pasted
+            const canonical = `https://www.youtube.com/watch?v=${id}`;
+            if (updateHistory) history.pushState(null, "", `/${canonical}`);
+            this.inputUrl = canonical;
+            this.loading = true;
+            this.disposePlayer();
+            this.videoId = "";
+            try {
+                const response = await fetch(`/api/video?url=${encodeURIComponent(canonical)}`);
+                if (response.status !== 404 && !response.ok) throw new HttpError(response.status);
+                const data = response.ok ? await response.json() : { video: { title: "" }, subtitles: [] };
+                this.title = data.video.title;
+                this.tracks = this.buildTracks(data.subtitles);
+                this.trackId = this.pickTrack();
+                this.videoId = id;
+                document.title = this.title ? `${this.title} – Subbed` : "Subbed";
+                await this.$nextTick();
+                await loadYoutubeApi();
+                await this.startPlayer(id, this.tracks.length === 0);
+            } catch (error) {
+                this.videoId = "";
+                this.error =
+                    error instanceof HttpError ? { key: "error.server", params: { status: error.status } } : { key: "error.network" };
+            } finally {
+                this.loading = false;
+            }
+        },
+
+        /**
+         * @param {{ id: number, language: string, content: string }[]} subtitles
+         * @returns {Track[]}
+         */
+        buildTracks(subtitles) {
+            const names = new Intl.DisplayNames([this.lang], { type: "language" });
+            const seen = new Map();
+            return subtitles
+                .map((subtitle) => ({ subtitle, cues: parseSubtitles(subtitle.content) }))
+                .filter(({ cues }) => cues.length)
+                .map(({ subtitle, cues }) => {
+                    const count = (seen.get(subtitle.language) ?? 0) + 1;
+                    seen.set(subtitle.language, count);
+                    let name;
+                    try {
+                        name = names.of(subtitle.language) ?? subtitle.language.toUpperCase();
+                    } catch {
+                        name = subtitle.language.toUpperCase();
+                    }
+                    return {
+                        id: String(subtitle.id),
+                        language: subtitle.language,
+                        label: count > 1 ? `${name} (${count})` : name,
+                        cues,
+                    };
+                });
+        },
+
+        /** Prefer the language chosen last time, else the first track. */
+        pickTrack() {
+            const saved = storage.get(STORAGE_KEYS.subtitleLanguage);
+            if (saved === OFF) return OFF;
+            return (this.tracks.find((track) => track.language === saved) ?? this.tracks[0])?.id ?? OFF;
+        },
+
+        // ---- YouTube player ----
+
+        /**
+         * @param {string} id
+         * @param {boolean} withYoutubeCaptions turn YouTube's own captions on (no library subtitles)
+         * @returns {Promise<void>}
+         */
+        startPlayer(id, withYoutubeCaptions) {
+            return new Promise((resolve) => {
+                // YT.Player replaces its target element, so every start gets a fresh one
+                this.$refs.mount.innerHTML = '<div id="yt-player"></div>';
+                // @ts-ignore
+                player = new YT.Player("yt-player", {
+                    videoId: id,
+                    playerVars: {
+                        controls: 1,
+                        autoplay: 0,
+                        rel: 0,
+                        playsinline: 1,
+                        origin: location.origin,
+                        // our own fullscreen button keeps the subtitles visible; fall back to YouTube's where it can't
+                        fs: this.canFullscreen ? 0 : 1,
+                        ...(withYoutubeCaptions && { cc_load_policy: 1, cc_lang_pref: this.lang }),
+                    },
+                    events: {
+                        onReady: (/** @type {any} */ event) => {
+                            if (!withYoutubeCaptions) {
+                                try {
+                                    event.target.unloadModule("captions");
+                                    event.target.unloadModule("cc");
+                                } catch {
+                                    // the modules may not exist
+                                }
+                            }
+                            resolve();
+                        },
+                        onStateChange: (/** @type {any} */ event) => {
+                            // @ts-ignore
+                            if (event.data === YT.PlayerState.PLAYING) this.startSync();
+                            else this.stopSync();
+                            this.tick();
+                        },
+                    },
+                });
+            });
+        },
+
+        disposePlayer() {
+            this.stopSync();
+            player?.destroy?.();
+            player = null;
+            shownCue = null;
+            this.cueHtml = "";
+            if (this.$refs.mount) this.$refs.mount.innerHTML = "";
+        },
+
+        // ---- subtitle sync ----
+
+        get track() {
+            return this.tracks.find((track) => track.id === this.trackId) ?? null;
+        },
+
+        startSync() {
+            this.stopSync();
+            syncTimer = window.setInterval(() => this.tick(), SYNC_INTERVAL_MS);
+        },
+
+        stopSync() {
+            clearInterval(syncTimer);
+            syncTimer = 0;
+        },
+
+        /** Show the cue for the player's current time, re-rendering only when the cue changes. */
+        tick() {
+            const track = this.track;
+            const cue = track && player?.getCurrentTime ? cueAt(track.cues, player.getCurrentTime() - this.delay) : null;
+            if (cue === shownCue) return;
+            shownCue = cue;
+            this.cueHtml = cue ? renderCue(cue.lines) : "";
+        },
+
+        onTrackChange() {
+            storage.set(STORAGE_KEYS.subtitleLanguage, this.track ? this.track.language : OFF);
+            shownCue = null;
+            this.tick();
+        },
+
+        // ---- subtitle controls ----
+
+        get scale() {
+            return SIZE_STEPS[this.sizeIndex];
+        },
+
+        /** @param {number} direction -1 or 1 */
+        bumpSize(direction) {
+            this.sizeIndex = Math.min(Math.max(this.sizeIndex + direction, 0), SIZE_STEPS.length - 1);
+            storage.set(STORAGE_KEYS.size, String(this.sizeIndex));
+        },
+
+        /** @param {number} direction -1 shows subtitles earlier, 1 later */
+        bumpDelay(direction) {
+            const next = Math.round((this.delay + direction * DELAY_STEP_SECONDS) * 10) / 10;
+            this.delay = Math.min(Math.max(next, -DELAY_LIMIT_SECONDS), DELAY_LIMIT_SECONDS);
+            shownCue = null;
+            this.tick();
+        },
+
+        resetDelay() {
+            this.delay = 0;
+            shownCue = null;
+            this.tick();
+        },
+
+        get delayLabel() {
+            return `${this.delay > 0 ? "+" : ""}${this.delay.toFixed(1)} s`;
+        },
+
+        toggleFullscreen() {
+            if (document.fullscreenElement) document.exitFullscreen();
+            else this.$refs.stage.requestFullscreen?.();
+        },
+    }));
+});
+
+class HttpError extends Error {
+    /** @param {number} status */
+    constructor(status) {
+        super(`HTTP ${status}`);
+        this.status = status;
+    }
+}
