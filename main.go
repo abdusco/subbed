@@ -192,7 +192,7 @@ func newServer(cfg serverConfig) *echo.Echo {
 	e.GET("/admin", servePage(adminOnlyFile), auth)
 	e.GET("/admin/", servePage(adminOnlyFile), auth)
 	// the service worker must live outside /static so its scope can cover /admin
-	e.GET("/admin-sw.js", servePage("admin-sw.js"))
+	e.GET("/admin-sw.js", servePage("admin-sw.js"), quiet)
 
 	admin := e.Group("/api/admin", auth)
 	admin.GET("/videos", listVideos(cfg.repo))
@@ -206,7 +206,7 @@ func newServer(cfg serverConfig) *echo.Echo {
 	}
 	admin.GET("/oembed", handleOEmbed(cfg.oembed))
 
-	e.GET("/static/*", serveStatic(cfg.debug))
+	e.GET("/static/*", serveStatic(cfg.debug), quiet)
 	// the player is addressed as /<youtube url>
 	e.GET("/*", func(c echo.Context) error {
 		if _, ok := youtubeURLFromPath(c.Request().URL.EscapedPath()); !ok {
@@ -253,6 +253,9 @@ func requestLogger(logger *slog.Logger) echo.MiddlewareFunc {
 		// let the error handler run first so the logged status is the one the client received
 		HandleError: true,
 		LogValuesFunc: func(c echo.Context, v middleware.RequestLoggerValues) error {
+			if c.Get(quietKey) == true && v.Status < 400 {
+				return nil
+			}
 			attrs := []any{
 				"method", v.Method,
 				"status", v.Status,
@@ -275,6 +278,17 @@ func requestLogger(logger *slog.Logger) echo.MiddlewareFunc {
 			return nil
 		},
 	})
+}
+
+// quietKey marks a request that the request logger should skip when it succeeds.
+const quietKey = "quiet"
+
+// quiet keeps successful requests to a route out of the access log. Failures are still logged.
+func quiet(next echo.HandlerFunc) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		c.Set(quietKey, true)
+		return next(c)
+	}
 }
 
 // errorResponse is the body of every API error.

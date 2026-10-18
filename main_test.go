@@ -249,7 +249,7 @@ func TestVideoAndSubtitleFlow(t *testing.T) {
 
 func TestRequestLogShowsPathAsText(t *testing.T) {
 	app := newTestApp(t)
-	app.do(http.MethodGet, "/static/app.js?v=1", nil, nil, false)
+	app.do(http.MethodGet, "/?v=1", nil, nil, false)
 	app.do(http.MethodGet, "/nope", nil, nil, false)
 
 	var entries []map[string]any
@@ -263,11 +263,25 @@ func TestRequestLogShowsPathAsText(t *testing.T) {
 	if len(entries) != 2 {
 		t.Fatalf("got %d log entries, want 2: %s", len(entries), app.logs.String())
 	}
-	if entries[0]["path"] != "/static/app.js?v=1" || entries[0]["status"] != float64(200) || entries[0]["level"] != "INFO" {
+	if entries[0]["path"] != "/?v=1" || entries[0]["status"] != float64(200) || entries[0]["level"] != "INFO" {
 		t.Fatalf("first entry: %v", entries[0])
 	}
 	if entries[1]["path"] != "/nope" || entries[1]["status"] != float64(404) || entries[1]["level"] != "WARN" {
 		t.Fatalf("second entry: %v", entries[1])
+	}
+}
+
+func TestRequestLogSkipsStaticFiles(t *testing.T) {
+	app := newTestApp(t)
+	app.do(http.MethodGet, "/static/app.js", nil, nil, false)
+	app.do(http.MethodGet, "/admin-sw.js", nil, nil, false)
+	if app.logs.Len() != 0 {
+		t.Fatalf("successful static requests were logged: %s", app.logs.String())
+	}
+
+	app.do(http.MethodGet, "/static/missing.js", nil, nil, false)
+	if !strings.Contains(app.logs.String(), "/static/missing.js") {
+		t.Fatalf("a failed static request should be logged: %q", app.logs.String())
 	}
 }
 
