@@ -14,6 +14,7 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+	"time"
 )
 
 var testCreds = Credentials{Username: "admin", Password: "secret"}
@@ -40,6 +41,7 @@ func newTestAppWith(t *testing.T, oembedURL string) *testApp {
 	assets := fstest.MapFS{
 		"index.html":          {Data: []byte("<title>player</title>")},
 		"admin.html":          {Data: []byte("<title>admin</title>")},
+		"login.html":          {Data: []byte("<title>login</title>")},
 		"admin-sw.js":         {Data: []byte("// sw")},
 		"app.js":              {Data: []byte("// app")},
 		"admin/admin.css":     {Data: []byte("body{}")},
@@ -58,7 +60,8 @@ func (a *testApp) do(method, target string, body io.Reader, headers map[string]s
 		req.Header.Set(key, value)
 	}
 	if authed {
-		req.SetBasicAuth(testCreds.Username, testCreds.Password)
+		token, _ := newSessions(testCreds).issue()
+		req.AddCookie(&http.Cookie{Name: sessionCookie, Value: token})
 	}
 	rec := httptest.NewRecorder()
 	a.handler.ServeHTTP(rec, req)
@@ -109,9 +112,11 @@ func TestPagesAndStaticFiles(t *testing.T) {
 		{"player for a youtube path", "/https://www.youtube.com/watch?v=jNQXAC9IVRw", false, 200, "player"},
 		{"player for a collapsed scheme", "/https:/youtu.be/jNQXAC9IVRw", false, 200, "player"},
 		{"unknown path", "/nope", false, 404, ""},
-		{"admin needs login", "/admin", false, 401, ""},
+		{"admin redirects to the login page", "/admin", false, 302, ""},
+		{"login page", "/login", false, 200, "login"},
+		{"login page sends signed-in users to admin", "/login", true, 302, ""},
 		{"admin with login", "/admin", true, 200, "admin"},
-		{"admin with trailing slash", "/admin/", true, 200, "admin"},
+		{"admin has no trailing-slash route", "/admin/", true, 404, ""},
 		{"admin.html is not public at the root", "/admin.html", false, 404, ""},
 		{"admin.html is not public under /static", "/static/admin.html", false, 404, ""},
 		{"static file", "/static/app.js", false, 200, "// app"},
@@ -135,16 +140,116 @@ func TestPagesAndStaticFiles(t *testing.T) {
 	if got := app.do(http.MethodGet, "/", nil, nil, false).Header().Get("Cache-Control"); got != "no-cache" {
 		t.Fatalf("Cache-Control on the page = %q, want no-cache", got)
 	}
-	if got := app.do(http.MethodGet, "/admin", nil, nil, false).Header().Get("WWW-Authenticate"); !strings.Contains(strings.ToLower(got), "basic") {
-		t.Fatalf("WWW-Authenticate = %q, want a Basic challenge", got)
+	if got := app.do(http.MethodGet, "/admin", nil, nil, false).Header().Get("Location"); got != "/login" {
+		t.Fatalf("redirect Location = %q, want /login", got)
 	}
-	wrong := httptest.NewRequest(http.MethodGet, "/admin", nil)
-	wrong.SetBasicAuth("admin", "wrong")
+}
+
+func TestLoginAndLogout(t *testing.T) {
+	app := newTestApp(t)
+	login := func(username, password string) *httptest.ResponseRecorder {
+		payload, _ := json.Marshal(map[string]string{"username": username, "password": password})
+		return app.do(http.MethodPost, "/api/login", bytes.NewReader(payload), map[string]string{"Content-Type": "application/json"}, false)
+	}
+	sessionOf := func(rec *httptest.ResponseRecorder) *http.Cookie {
+		for _, cookie := range rec.Result().Cookies() {
+			if cookie.Name == sessionCookie {
+				return cookie
+			}
+		}
+		return nil
+	}
+
+	for name, credentials := range map[string][2]string{
+		"wrong password": {"admin", "wrong"},
+		"wrong username": {"root", "secret"},
+		"empty":          {"", ""},
+	} {
+		rec := login(credentials[0], credentials[1])
+		if rec.Code != http.StatusUnauthorized || sessionOf(rec) != nil {
+			t.Fatalf("%s: status = %d, cookie = %v, want 401 and no cookie", name, rec.Code, sessionOf(rec))
+		}
+		errorMessage(t, rec)
+	}
+
+	rec := login("admin", "secret")
+	cookie := sessionOf(rec)
+	if rec.Code != http.StatusNoContent || cookie == nil {
+		t.Fatalf("login status = %d, cookie = %v, want 204 and a session cookie", rec.Code, cookie)
+	}
+	if !cookie.HttpOnly || cookie.SameSite != http.SameSiteLaxMode {
+		t.Fatalf("session cookie should be HttpOnly and SameSite=Lax: %v", cookie)
+	}
+	if cookie.Secure {
+		t.Fatal("session cookie should not be Secure over plain HTTP")
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/videos", nil)
+	req.AddCookie(cookie)
 	out := httptest.NewRecorder()
-	app.handler.ServeHTTP(out, wrong)
-	if out.Code != http.StatusUnauthorized {
-		t.Fatalf("wrong password status = %d, want 401", out.Code)
+	app.handler.ServeHTTP(out, req)
+	if out.Code != http.StatusOK {
+		t.Fatalf("admin API with the issued cookie = %d, want 200", out.Code)
 	}
+
+	secure := httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(`{"username":"admin","password":"secret"}`))
+	secure.Header.Set("Content-Type", "application/json")
+	secure.Header.Set("X-Forwarded-Proto", "https")
+	// Echo only trusts forwarding headers from loopback and private-network peers
+	secure.RemoteAddr = "127.0.0.1:50000"
+	behindProxy := httptest.NewRecorder()
+	app.handler.ServeHTTP(behindProxy, secure)
+	if cookie := sessionOf(behindProxy); cookie == nil || !cookie.Secure {
+		t.Fatalf("cookie behind an https proxy should be Secure: %v", cookie)
+	}
+
+	rec = app.do(http.MethodPost, "/api/logout", nil, nil, true)
+	if cleared := sessionOf(rec); rec.Code != http.StatusNoContent || cleared == nil || cleared.Value != "" || !cleared.Expires.Before(time.Now()) {
+		t.Fatalf("logout status = %d, cookie = %v, want 204 and an expired empty cookie", rec.Code, cleared)
+	}
+}
+
+func TestSessionTokens(t *testing.T) {
+	sessions := newSessions(testCreds)
+	token, _ := sessions.issue()
+	if !sessions.valid(token) {
+		t.Fatal("a fresh token should be valid")
+	}
+
+	expiry, signature, _ := strings.Cut(token, ".")
+	for name, bad := range map[string]string{
+		"empty":        "",
+		"no signature": expiry,
+		"tampered":     expiry + "." + strings.Repeat("0", len(signature)),
+		"later expiry": "99999999999." + signature,
+		"not a number": "x." + sessions.sign("x"),
+		"other password": func() string {
+			other, _ := newSessions(Credentials{Username: "admin", Password: "other"}).issue()
+			return other
+		}(),
+	} {
+		if sessions.valid(bad) {
+			t.Fatalf("%s token should be rejected", name)
+		}
+	}
+
+	later := newSessions(testCreds)
+	later.now = func() time.Time { return time.Now().Add(sessionTTL + time.Minute) }
+	if later.valid(token) {
+		t.Fatal("an expired token should be rejected")
+	}
+}
+
+func TestLoginIsRateLimited(t *testing.T) {
+	app := newTestApp(t)
+	var last *httptest.ResponseRecorder
+	for range 15 {
+		last = app.do(http.MethodPost, "/api/login", strings.NewReader(`{"username":"admin","password":"wrong"}`), map[string]string{"Content-Type": "application/json"}, false)
+	}
+	if last.Code != http.StatusTooManyRequests {
+		t.Fatalf("status after 15 failed attempts = %d, want 429", last.Code)
+	}
+	errorMessage(t, last)
 }
 
 func TestVideoAndSubtitleFlow(t *testing.T) {

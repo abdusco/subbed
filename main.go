@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/subtle"
 	"embed"
 	"errors"
 	"fmt"
@@ -184,17 +183,22 @@ func newServer(cfg serverConfig) *echo.Echo {
 	}))
 	e.Use(middleware.BodyLimit(maxRequestBody))
 
-	auth := basicAuth(cfg.creds)
+	session := newSessions(cfg.creds)
+	adminPage := session.requireSession(true)
+	adminAPI := session.requireSession(false)
 
 	e.GET("/", servePage("index.html"))
 	e.GET("/api/video", handleVideoRequest(cfg.repo))
 
-	e.GET("/admin", servePage(adminOnlyFile), auth)
-	e.GET("/admin/", servePage(adminOnlyFile), auth)
+	e.GET(loginPath, session.loginPage(servePage("login.html")))
+	e.POST("/api/login", session.handleLogin, loginRateLimit())
+	e.POST("/api/logout", session.handleLogout)
+
+	e.GET("/admin", servePage(adminOnlyFile), adminPage)
 	// the service worker must live outside /static so its scope can cover /admin
 	e.GET("/admin-sw.js", servePage("admin-sw.js"), quiet)
 
-	admin := e.Group("/api/admin", auth)
+	admin := e.Group("/api/admin", adminAPI)
 	admin.GET("/videos", listVideos(cfg.repo))
 	admin.POST("/videos", addVideo(cfg.repo))
 	admin.PATCH("/videos/:id", updateVideo(cfg.repo))
@@ -331,16 +335,4 @@ func newCredentialsFromEnvironment(envVar string) (Credentials, error) {
 		return Credentials{}, fmt.Errorf("invalid credentials format in %q, expected username:password", envVar)
 	}
 	return Credentials{Username: username, Password: password}, nil
-}
-
-func basicAuth(creds Credentials) echo.MiddlewareFunc {
-	return middleware.BasicAuthWithConfig(middleware.BasicAuthConfig{
-		Realm: "Subbed admin",
-		Validator: func(username, password string, _ echo.Context) (bool, error) {
-			// compare both fields in constant time and without short-circuiting
-			userMatch := subtle.ConstantTimeCompare([]byte(username), []byte(creds.Username))
-			passwordMatch := subtle.ConstantTimeCompare([]byte(password), []byte(creds.Password))
-			return userMatch&passwordMatch == 1, nil
-		},
-	})
 }
