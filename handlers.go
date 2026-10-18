@@ -11,6 +11,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/labstack/echo/v4"
+
+	"subbed/internal/youtube"
 )
 
 const (
@@ -84,6 +86,35 @@ func handleVideoRequest(repo *Repository) echo.HandlerFunc {
 			},
 			Subtitles: subtitles,
 		})
+	}
+}
+
+// handleOEmbed looks up a video's title through YouTube's oEmbed endpoint, so the admin UI can fill it in.
+// It is a small proxy: the browser talks to this server, and only a video id is ever sent upstream.
+func handleOEmbed(client *youtube.OEmbedClient) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		videoID, ok := youtubeVideoIDFromURL(c.QueryParam("url"))
+		if !ok || !youtube.ValidVideoID(videoID) {
+			return echo.NewHTTPError(http.StatusBadRequest, "Invalid YouTube URL")
+		}
+
+		result, err := client.Fetch(c.Request().Context(), videoID)
+		if err != nil {
+			switch {
+			case errors.Is(err, youtube.ErrNotFound):
+				return echo.NewHTTPError(http.StatusNotFound, youtube.ErrNotFound.Error()).SetInternal(err)
+			case errors.Is(err, youtube.ErrUnreachable):
+				return echo.NewHTTPError(http.StatusBadGateway, youtube.ErrUnreachable.Error()).SetInternal(err)
+			case errors.Is(err, youtube.ErrUnavailable):
+				return echo.NewHTTPError(http.StatusBadGateway, youtube.ErrUnavailable.Error()).SetInternal(err)
+			case errors.Is(err, youtube.ErrUnexpected):
+				return echo.NewHTTPError(http.StatusBadGateway, youtube.ErrUnexpected.Error()).SetInternal(err)
+			default:
+				return err
+			}
+		}
+
+		return c.JSON(http.StatusOK, result)
 	}
 }
 

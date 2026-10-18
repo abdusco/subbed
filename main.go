@@ -18,6 +18,8 @@ import (
 
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
+
+	"subbed/internal/youtube"
 )
 
 //go:embed static/*
@@ -169,7 +171,7 @@ type serverConfig struct {
 	sessionKey []byte
 	debug      bool
 	logger     *slog.Logger
-	oembed     *YoutubeOEmbed
+	oembed     *youtube.OEmbedClient
 }
 
 // newServer builds the HTTP server with all routes and middleware.
@@ -213,7 +215,7 @@ func newServer(cfg serverConfig) *echo.Echo {
 	admin.POST("/subtitles", uploadSubtitle(cfg.repo))
 	admin.DELETE("/subtitles/:id", deleteSubtitle(cfg.repo))
 	if cfg.oembed == nil {
-		cfg.oembed = NewYoutubeOEmbed(nil, "")
+		cfg.oembed = youtube.NewOEmbedClient(nil, "")
 	}
 	admin.GET("/oembed", handleOEmbed(cfg.oembed))
 

@@ -1,4 +1,4 @@
-package main
+package youtube
 
 import (
 	"context"
@@ -8,22 +8,22 @@ import (
 	"testing"
 )
 
-func TestYoutubeOEmbedFetch(t *testing.T) {
+func TestOEmbedClientFetch(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		status int
 		body   string
-		want   YoutubeOEmbedResult
+		want   OEmbedResult
 		err    error
 	}{
-		{name: "metadata", status: 200, body: `{"title":"  Me at the zoo ","author_name":" jawed "}`, want: YoutubeOEmbedResult{Title: "Me at the zoo", Author: "jawed"}},
-		{name: "unknown video", status: 400, err: errOEmbedNotFound},
-		{name: "private video", status: 401, err: errOEmbedNotFound},
-		{name: "embedding disabled", status: 403, err: errOEmbedNotFound},
-		{name: "missing video", status: 404, err: errOEmbedNotFound},
-		{name: "outage", status: 500, err: errOEmbedUnavailable},
-		{name: "invalid json", status: 200, body: `not json`, err: errOEmbedUnexpected},
-		{name: "empty title", status: 200, body: `{"title":" "}`, err: errOEmbedUnexpected},
+		{name: "metadata", status: 200, body: `{"title":"  Me at the zoo ","author_name":" jawed "}`, want: OEmbedResult{Title: "Me at the zoo", Author: "jawed"}},
+		{name: "unknown video", status: 400, err: ErrNotFound},
+		{name: "private video", status: 401, err: ErrNotFound},
+		{name: "embedding disabled", status: 403, err: ErrNotFound},
+		{name: "missing video", status: 404, err: ErrNotFound},
+		{name: "outage", status: 500, err: ErrUnavailable},
+		{name: "invalid json", status: 200, body: `not json`, err: ErrUnexpected},
+		{name: "empty title", status: 200, body: `{"title":" "}`, err: ErrUnexpected},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -35,7 +35,7 @@ func TestYoutubeOEmbedFetch(t *testing.T) {
 			}))
 			defer upstream.Close()
 
-			client := NewYoutubeOEmbed(upstream.Client(), upstream.URL)
+			client := NewOEmbedClient(upstream.Client(), upstream.URL)
 			got, err := client.Fetch(context.Background(), "jNQXAC9IVRw")
 			if !errors.Is(err, tc.err) {
 				t.Fatalf("error = %v, want %v", err, tc.err)
@@ -47,7 +47,7 @@ func TestYoutubeOEmbedFetch(t *testing.T) {
 	}
 }
 
-func TestYoutubeOEmbedFetchCanceled(t *testing.T) {
+func TestOEmbedClientFetchCanceled(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Error("canceled request reached upstream")
 	}))
@@ -55,9 +55,17 @@ func TestYoutubeOEmbedFetchCanceled(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	client := NewYoutubeOEmbed(upstream.Client(), upstream.URL)
+	client := NewOEmbedClient(upstream.Client(), upstream.URL)
 	_, err := client.Fetch(ctx, "jNQXAC9IVRw")
-	if !errors.Is(err, context.Canceled) || !errors.Is(err, errOEmbedUnreachable) {
+	if !errors.Is(err, context.Canceled) || !errors.Is(err, ErrUnreachable) {
 		t.Fatalf("error = %v, want cancellation and unreachable errors", err)
+	}
+}
+
+func TestValidVideoID(t *testing.T) {
+	for id, want := range map[string]bool{"jNQXAC9IVRw": true, "a46Xp8FtWOg": true, "short": false, "has space!!": false, "": false} {
+		if got := ValidVideoID(id); got != want {
+			t.Errorf("ValidVideoID(%q) = %v, want %v", id, got, want)
+		}
 	}
 }
