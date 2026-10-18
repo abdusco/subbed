@@ -102,6 +102,19 @@ func (r *Repository) initDB() error {
 		return fmt.Errorf("failed to create subtitles table: %w", err)
 	}
 
+	// Older databases can hold several subtitles per video and language. Keep the newest, then enforce uniqueness.
+	_, err = sqlDB.Exec(`
+		DELETE FROM subtitles
+		WHERE id NOT IN (SELECT MAX(id) FROM subtitles GROUP BY video_id, language)
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to remove duplicate subtitles: %w", err)
+	}
+	_, err = sqlDB.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS subtitles_video_language ON subtitles (video_id, language)`)
+	if err != nil {
+		return fmt.Errorf("failed to create subtitles index: %w", err)
+	}
+
 	return nil
 }
 
@@ -129,6 +142,7 @@ func (r *Repository) GetSubtitlesByVideoID(ctx context.Context, videoID int) ([]
 	err := r.db.From("subtitles").
 		Select("id", "video_id", "language", "type", "content").
 		Where(goqu.C("video_id").Eq(videoID)).
+		Order(goqu.C("id").Asc()).
 		ScanStructsContext(ctx, &subtitles)
 
 	if err != nil {
@@ -165,6 +179,7 @@ func (r *Repository) ListAllVideos(ctx context.Context) ([]VideoWithSubs, error)
 		err := r.db.From("subtitles").
 			Select("id", "video_id", "language", "type").
 			Where(goqu.C("video_id").Eq(video.ID)).
+			Order(goqu.C("id").Asc()).
 			ScanStructsContext(ctx, &subtitles)
 
 		if err != nil {
@@ -239,8 +254,8 @@ func (r *Repository) UpdateVideoTitle(ctx context.Context, id int, title string)
 	return affected > 0, nil
 }
 
-// CreateSubtitle inserts a new subtitle
-func (r *Repository) CreateSubtitle(ctx context.Context, videoID int, language, subType, content string) error {
+// SaveSubtitle stores a subtitle, replacing the video's existing one in the same language
+func (r *Repository) SaveSubtitle(ctx context.Context, videoID int, language, subType, content string) error {
 	_, err := r.db.Insert("subtitles").
 		Rows(goqu.Record{
 			"video_id": videoID,
@@ -248,11 +263,15 @@ func (r *Repository) CreateSubtitle(ctx context.Context, videoID int, language, 
 			"type":     subType,
 			"content":  content,
 		}).
+		OnConflict(goqu.DoUpdate("video_id, language", goqu.Record{
+			"type":    goqu.L("excluded.type"),
+			"content": goqu.L("excluded.content"),
+		})).
 		Executor().
 		ExecContext(ctx)
 
 	if err != nil {
-		return fmt.Errorf("failed to insert subtitle: %w", err)
+		return fmt.Errorf("failed to save subtitle: %w", err)
 	}
 
 	return nil

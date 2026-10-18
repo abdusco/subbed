@@ -310,6 +310,10 @@ func TestVideoAndSubtitleFlow(t *testing.T) {
 	if rec := app.upload(id, "en", "srt", "a.srt", "\xef\xbb\xbf1\n00:00:01,000 --> 00:00:02,000\nHi\n"); rec.Code != 200 {
 		t.Fatalf("upload srt: status %d", rec.Code)
 	}
+	// uploading a language again replaces it instead of adding a second subtitle (the list check below expects two)
+	if rec := app.upload(id, "en", "srt", "a.srt", "\xef\xbb\xbf1\n00:00:01,000 --> 00:00:02,000\nHi\n"); rec.Code != 200 {
+		t.Fatalf("re-upload srt: status %d", rec.Code)
+	}
 	for name, rec := range map[string]*httptest.ResponseRecorder{
 		"bad language":  app.upload(id, "", "srt", "a.srt", "x"),
 		"bad type":      app.upload(id, "en", "txt", "a.txt", "x"),

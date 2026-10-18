@@ -256,8 +256,8 @@ func uploadSubtitle(repo *Repository) echo.HandlerFunc {
 			content = vttToSRT(content)
 		}
 
-		// subtitles are always stored as SRT
-		err = repo.CreateSubtitle(c.Request().Context(), videoID, language, "srt", content)
+		// subtitles are always stored as SRT; a new upload replaces the video's subtitle in that language
+		err = repo.SaveSubtitle(c.Request().Context(), videoID, language, "srt", content)
 		if err != nil && strings.Contains(err.Error(), "FOREIGN KEY constraint failed") {
 			return echo.NewHTTPError(http.StatusNotFound, "Video not found")
 		}
