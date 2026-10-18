@@ -15,6 +15,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"subbed/internal/subtitle"
 )
 
@@ -73,12 +76,16 @@ func (f *fakeTools) Translate(ctx context.Context, cues []subtitle.Cue, language
 	if f.translate != nil {
 		return f.translate(ctx, cues, language)
 	}
+	return prefixCues(cues, language+": "), nil
+}
+
+func prefixCues(cues []subtitle.Cue, prefix string) []subtitle.Cue {
 	translated := make([]subtitle.Cue, len(cues))
 	for position, cue := range cues {
-		cue.Text = language + ": " + cue.Text
+		cue.Text = prefix + cue.Text
 		translated[position] = cue
 	}
-	return translated, nil
+	return translated
 }
 
 func newJobApp(t *testing.T, tools *fakeTools) (*testApp, *JobRunner) {
@@ -100,32 +107,38 @@ func (a *testApp) postJSON(path string, payload any, authed bool) *httptest.Resp
 func addTestVideo(t *testing.T, app *testApp) int {
 	t.Helper()
 	rec := app.addVideo("https://www.youtube.com/watch?v=jNQXAC9IVRw", "Me at the zoo")
+	require.Equal(t, 200, rec.Code, rec.Body.String())
 	var added struct{ ID int }
-	if err := json.Unmarshal(rec.Body.Bytes(), &added); err != nil || rec.Code != 200 {
-		t.Fatalf("add video: %d %q", rec.Code, rec.Body.String())
-	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &added))
 	return added.ID
 }
 
-func generate(app *testApp, videoID int, payload any) *httptest.ResponseRecorder {
-	return app.postJSON(fmt.Sprintf("/api/admin/videos/%d/generate", videoID), payload, true)
+func transcribeRequest(app *testApp, videoID int, payload any) *httptest.ResponseRecorder {
+	return app.postJSON(fmt.Sprintf("/api/admin/videos/%d/transcribe", videoID), payload, true)
+}
+
+func translateRequest(app *testApp, videoID int, payload any) *httptest.ResponseRecorder {
+	return app.postJSON(fmt.Sprintf("/api/admin/videos/%d/translate", videoID), payload, true)
 }
 
 func decodeJob(t *testing.T, rec *httptest.ResponseRecorder) Job {
 	t.Helper()
 	var job Job
-	if err := json.Unmarshal(rec.Body.Bytes(), &job); err != nil {
-		t.Fatalf("not a job: %v %q", err, rec.Body.String())
-	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &job), rec.Body.String())
 	return job
+}
+
+// storeEnglishSubtitle uploads an English subtitle the way the admin would.
+func storeEnglishSubtitle(t *testing.T, app *testApp, videoID int, language string) {
+	t.Helper()
+	rec := app.upload(strconv.Itoa(videoID), language, "srt", "a.srt", testSRT)
+	require.Equal(t, 200, rec.Code, rec.Body.String())
 }
 
 func subtitleContents(t *testing.T, app *testApp, videoID int) map[string]string {
 	t.Helper()
 	subtitles, err := app.repo.GetSubtitlesByVideoID(context.Background(), videoID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	contents := map[string]string{}
 	for _, subtitle := range subtitles {
 		contents[subtitle.Language] = subtitle.Content
@@ -133,163 +146,93 @@ func subtitleContents(t *testing.T, app *testApp, videoID int) map[string]string
 	return contents
 }
 
-func jobLogLines(t *testing.T, app *testApp, jobID int64) []string {
+func logOf(t *testing.T, app *testApp, jobID int64) string {
 	t.Helper()
 	logs, err := app.repo.ListJobLogs(context.Background(), jobID, 0, 1000)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	lines := make([]string, len(logs))
 	for position, line := range logs {
 		lines[position] = line.Level + " " + line.Message
 	}
-	return lines
+	return strings.Join(lines, "\n")
 }
 
-func containsLine(lines []string, want string) bool {
-	for _, line := range lines {
-		if strings.Contains(line, want) {
-			return true
-		}
-	}
-	return false
+func runQueued(t *testing.T, runner *JobRunner) {
+	t.Helper()
+	require.NoError(t, runner.drain(context.Background()))
 }
 
-func TestGenerateTranscribesAndTranslates(t *testing.T) {
+func TestTranscribeSavesTheSubtitleInTheDetectedLanguage(t *testing.T) {
 	tools := &fakeTools{}
 	app, runner := newJobApp(t, tools)
 	videoID := addTestVideo(t, app)
-	cookies, _ := parseNetscapeCookies(sampleCookies)
-	if err := app.repo.UpsertCookies(context.Background(), cookies); err != nil {
-		t.Fatal(err)
-	}
+	cookies, err := parseNetscapeCookies(sampleCookies)
+	require.NoError(t, err)
+	require.NoError(t, app.repo.UpsertCookies(context.Background(), cookies))
 
-	rec := generate(app, videoID, map[string]any{"languages": []string{"TR", " de ", "tr", "en"}})
-	if rec.Code != 202 {
-		t.Fatalf("generate: %d %q", rec.Code, rec.Body.String())
-	}
+	rec := transcribeRequest(app, videoID, map[string]any{})
+	require.Equal(t, 202, rec.Code, rec.Body.String())
 	job := decodeJob(t, rec)
-	if job.Status != jobQueued || job.VideoTitle != "Me at the zoo" || strings.Join(job.Languages, ",") != "tr,de,en" {
-		t.Fatalf("job = %+v", job)
-	}
+	assert.Equal(t, jobTranscribe, job.Kind)
+	assert.Equal(t, jobQueued, job.Status)
+	assert.Equal(t, "Me at the zoo", job.VideoTitle)
+	assert.Empty(t, job.Languages)
 
-	if err := runner.drain(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	runQueued(t, runner)
 
 	finished, err := app.repo.GetJob(context.Background(), job.ID)
-	if err != nil || finished.Status != jobDone || finished.Error != "" {
-		t.Fatalf("job = %+v, %v", finished, err)
-	}
-	contents := subtitleContents(t, app, videoID)
-	if len(contents) != 3 || contents["en"] != testSRT {
-		t.Fatalf("subtitles = %v", contents)
-	}
-	if !strings.Contains(contents["tr"], "Turkish: Hello") || !strings.Contains(contents["de"], "German: World") {
-		t.Errorf("translations = %q", contents)
-	}
-	// the detected source language is not translated into itself
-	if strings.Join(tools.translated, ",") != "Turkish,German" {
-		t.Errorf("translated into %v", tools.translated)
-	}
-	if tools.downloads[0] != "https://www.youtube.com/watch?v=jNQXAC9IVRw" || tools.models[0] != "elevenlabs/scribe-v2" || tools.languages[0] != "" {
-		t.Errorf("downloads %v, models %v, languages %v", tools.downloads, tools.models, tools.languages)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, jobDone, finished.Status)
+	assert.Empty(t, finished.Error)
+	assert.Equal(t, map[string]string{"en": testSRT}, subtitleContents(t, app, videoID))
+	assert.Empty(t, tools.translated, "a transcription does not translate")
+	assert.Equal(t, []string{"https://www.youtube.com/watch?v=jNQXAC9IVRw"}, tools.downloads)
+	assert.Equal(t, []string{"elevenlabs/scribe-v2"}, tools.models)
+	assert.Equal(t, []string{""}, tools.languages)
 
 	// yt-dlp got the stored cookies in a temporary file, which is gone afterwards
-	if !strings.Contains(tools.cookiesSeen, "secret-sid") {
-		t.Errorf("cookie file content = %q", tools.cookiesSeen)
-	}
-	if _, err := os.Stat(tools.cookiesFile); !os.IsNotExist(err) {
-		t.Errorf("cookie file left behind: %v", err)
-	}
+	assert.Contains(t, tools.cookiesSeen, "secret-sid")
+	_, err = os.Stat(tools.cookiesFile)
+	assert.True(t, os.IsNotExist(err), "the cookie file is removed")
 
-	lines := jobLogLines(t, app, job.ID)
+	log := logOf(t, app, job.ID)
 	for _, want := range []string{"info Started: Me at the zoo", "info yt-dlp: [youtube] Downloading webpage", "info Downloaded abc.webm",
-		`The model detected the language "en"`, "Saved the en subtitle (2 cues)", "Translating 2 cues to Turkish", "Saved the tr subtitle", "info Done"} {
-		if !containsLine(lines, want) {
-			t.Errorf("log lacks %q:\n%s", want, strings.Join(lines, "\n"))
-		}
+		`The model detected the language "en"`, "Saved the en subtitle (2 cues)", "info Done"} {
+		assert.Contains(t, log, want)
 	}
 }
 
-func TestGenerateUsesTheConfiguredModelAndSourceLanguage(t *testing.T) {
+func TestTranscribeUsesTheConfiguredModelAndSourceLanguage(t *testing.T) {
 	tools := &fakeTools{transcribe: func(ctx context.Context, model, language string) (subtitle.Transcript, error) {
 		return subtitle.Transcript{SRT: testSRT, Language: "ignored", Cues: 2}, nil
 	}}
 	app, runner := newJobApp(t, tools)
 	videoID := addTestVideo(t, app)
-	if err := app.repo.SetSetting(context.Background(), settingTranscribeModel, "openai/whisper-large-v3"); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, app.repo.SetSetting(context.Background(), settingTranscribeModel, "openai/whisper-large-v3"))
 
-	rec := generate(app, videoID, map[string]any{"languages": []string{"de", "tr"}, "source_language": "DE"})
-	job := decodeJob(t, rec)
-	if job.SourceLanguage != "de" || strings.Join(job.Languages, ",") != "tr" {
-		t.Fatalf("job = %+v", job)
-	}
-	if err := runner.drain(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	job := decodeJob(t, transcribeRequest(app, videoID, map[string]any{"source_language": "DE"}))
+	assert.Equal(t, "de", job.SourceLanguage)
+	runQueued(t, runner)
 
-	if tools.models[0] != "openai/whisper-large-v3" || tools.languages[0] != "de" {
-		t.Errorf("models %v, languages %v", tools.models, tools.languages)
-	}
-	contents := subtitleContents(t, app, videoID)
-	if _, found := contents["ignored"]; found || contents["de"] != testSRT || !strings.Contains(contents["tr"], "Turkish") {
-		t.Errorf("subtitles = %v", contents)
-	}
-	if containsLine(jobLogLines(t, app, job.ID), "detected") {
-		t.Error("the language was detected although it was given")
-	}
+	assert.Equal(t, []string{"openai/whisper-large-v3"}, tools.models)
+	assert.Equal(t, []string{"de"}, tools.languages)
+	assert.Equal(t, map[string]string{"de": testSRT}, subtitleContents(t, app, videoID))
+	assert.NotContains(t, logOf(t, app, job.ID), "detected", "the language was given")
 }
 
-func TestGenerateReplacesAnExistingSubtitle(t *testing.T) {
+func TestTranscribeReplacesAnExistingSubtitle(t *testing.T) {
 	app, runner := newJobApp(t, &fakeTools{})
 	videoID := addTestVideo(t, app)
-	if rec := app.upload(strconv.Itoa(videoID), "en", "srt", "a.srt", "1\n00:00:01,000 --> 00:00:02,000\nmanual\n"); rec.Code != 200 {
-		t.Fatalf("upload: %d", rec.Code)
-	}
+	rec := app.upload(strconv.Itoa(videoID), "en", "srt", "a.srt", "1\n00:00:01,000 --> 00:00:02,000\nmanual\n")
+	require.Equal(t, 200, rec.Code)
 
-	generate(app, videoID, map[string]any{"languages": []string{}})
-	if err := runner.drain(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if contents := subtitleContents(t, app, videoID); len(contents) != 1 || contents["en"] != testSRT {
-		t.Fatalf("subtitles = %v", contents)
-	}
+	transcribeRequest(app, videoID, map[string]any{})
+	runQueued(t, runner)
+
+	assert.Equal(t, map[string]string{"en": testSRT}, subtitleContents(t, app, videoID))
 }
 
-func TestGenerateKeepsGoingWhenOneTranslationFails(t *testing.T) {
-	tools := &fakeTools{}
-	tools.translate = func(ctx context.Context, cues []subtitle.Cue, language string) ([]subtitle.Cue, error) {
-		if language == "German" {
-			return nil, errors.New("model refused")
-		}
-		return (&fakeTools{}).Translate(ctx, cues, language, func(string, ...any) {})
-	}
-	app, runner := newJobApp(t, tools)
-	videoID := addTestVideo(t, app)
-
-	job := decodeJob(t, generate(app, videoID, map[string]any{"languages": []string{"de", "tr", "fr"}}))
-	if err := runner.drain(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-
-	finished, _ := app.repo.GetJob(context.Background(), job.ID)
-	if finished.Status != jobFailed || finished.Error != "translation failed for: de" {
-		t.Fatalf("job = %+v", finished)
-	}
-	contents := subtitleContents(t, app, videoID)
-	if _, found := contents["de"]; found || contents["en"] == "" || contents["tr"] == "" || contents["fr"] == "" {
-		t.Errorf("subtitles = %v", contents)
-	}
-	if lines := jobLogLines(t, app, job.ID); !containsLine(lines, "error Translating to de failed: model refused") {
-		t.Errorf("log:\n%s", strings.Join(lines, "\n"))
-	}
-}
-
-func TestGenerateFailures(t *testing.T) {
+func TestTranscribeFailures(t *testing.T) {
 	for name, tc := range map[string]struct {
 		tools *fakeTools
 		want  string
@@ -316,36 +259,124 @@ func TestGenerateFailures(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			app, runner := newJobApp(t, tc.tools)
 			videoID := addTestVideo(t, app)
-			job := decodeJob(t, generate(app, videoID, map[string]any{"languages": []string{"tr"}}))
-			if err := runner.drain(context.Background()); err != nil {
-				t.Fatal(err)
-			}
+			job := decodeJob(t, transcribeRequest(app, videoID, map[string]any{}))
+			runQueued(t, runner)
 
-			finished, _ := app.repo.GetJob(context.Background(), job.ID)
-			if finished.Status != jobFailed || !strings.Contains(finished.Error, tc.want) {
-				t.Fatalf("job = %+v", finished)
-			}
-			if contents := subtitleContents(t, app, videoID); len(contents) != 0 {
-				t.Errorf("subtitles saved: %v", contents)
-			}
-			if lines := jobLogLines(t, app, job.ID); !containsLine(lines, "error Failed: ") {
-				t.Errorf("log:\n%s", strings.Join(lines, "\n"))
-			}
-			// a failed job does not block the next one
-			if rec := generate(app, videoID, map[string]any{"languages": []string{}}); rec.Code != 202 {
-				t.Errorf("generate after a failure: %d", rec.Code)
-			}
+			finished, err := app.repo.GetJob(context.Background(), job.ID)
+			require.NoError(t, err)
+			assert.Equal(t, jobFailed, finished.Status)
+			assert.Contains(t, finished.Error, tc.want)
+			assert.Empty(t, subtitleContents(t, app, videoID), "nothing is saved")
+			assert.Contains(t, logOf(t, app, job.ID), "error Failed: ")
+			assert.Equal(t, 202, transcribeRequest(app, videoID, map[string]any{}).Code, "a failed job does not block the next one")
 		})
 	}
 }
 
-func TestGenerateRequestValidation(t *testing.T) {
+func TestTranslateTranslatesAnExistingSubtitleWithoutDownloading(t *testing.T) {
+	tools := &fakeTools{}
+	app, runner := newJobApp(t, tools)
+	videoID := addTestVideo(t, app)
+	storeEnglishSubtitle(t, app, videoID, "en")
+
+	rec := translateRequest(app, videoID, map[string]any{"source_language": "EN", "languages": []string{"TR", " de ", "tr", "en"}})
+	require.Equal(t, 202, rec.Code, rec.Body.String())
+	job := decodeJob(t, rec)
+	assert.Equal(t, jobTranslate, job.Kind)
+	assert.Equal(t, "en", job.SourceLanguage)
+	assert.Equal(t, []string{"tr", "de"}, job.Languages, "duplicates and the source language are dropped")
+
+	runQueued(t, runner)
+
+	finished, err := app.repo.GetJob(context.Background(), job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, jobDone, finished.Status, finished.Error)
+	contents := subtitleContents(t, app, videoID)
+	require.Len(t, contents, 3)
+	assert.Equal(t, testSRT, contents["en"], "the source is untouched")
+	assert.Contains(t, contents["tr"], "Turkish: Hello")
+	assert.Contains(t, contents["de"], "German: World")
+	assert.Equal(t, []string{"Turkish", "German"}, tools.translated)
+	assert.Empty(t, tools.downloads, "no audio is needed")
+	assert.Empty(t, tools.models, "no transcription is needed")
+
+	log := logOf(t, app, job.ID)
+	for _, want := range []string{"Translating the en subtitle", "Translating 2 cues to Turkish", "Saved the tr subtitle", "info Done"} {
+		assert.Contains(t, log, want)
+	}
+}
+
+func TestTranslateAnyExistingLanguageIncludingOneThatWasGenerated(t *testing.T) {
+	tools := &fakeTools{}
+	app, runner := newJobApp(t, tools)
+	videoID := addTestVideo(t, app)
+	transcribeRequest(app, videoID, map[string]any{})
+	runQueued(t, runner)
+	translateRequest(app, videoID, map[string]any{"source_language": "en", "languages": []string{"tr"}})
+	runQueued(t, runner)
+
+	// translate the Turkish one into German
+	rec := translateRequest(app, videoID, map[string]any{"source_language": "tr", "languages": []string{"de"}})
+	require.Equal(t, 202, rec.Code, rec.Body.String())
+	runQueued(t, runner)
+
+	assert.Contains(t, subtitleContents(t, app, videoID)["de"], "German: Turkish: Hello")
+}
+
+func TestTranslateKeepsGoingWhenOneTranslationFails(t *testing.T) {
+	tools := &fakeTools{}
+	tools.translate = func(ctx context.Context, cues []subtitle.Cue, language string) ([]subtitle.Cue, error) {
+		if language == "German" {
+			return nil, errors.New("model refused")
+		}
+		return prefixCues(cues, language+": "), nil
+	}
+	app, runner := newJobApp(t, tools)
+	videoID := addTestVideo(t, app)
+	storeEnglishSubtitle(t, app, videoID, "en")
+
+	job := decodeJob(t, translateRequest(app, videoID, map[string]any{"source_language": "en", "languages": []string{"de", "tr", "fr"}}))
+	runQueued(t, runner)
+
+	finished, err := app.repo.GetJob(context.Background(), job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, jobFailed, finished.Status)
+	assert.Equal(t, "translation failed for: de", finished.Error)
+	contents := subtitleContents(t, app, videoID)
+	assert.NotContains(t, contents, "de")
+	assert.Contains(t, contents, "tr")
+	assert.Contains(t, contents, "fr")
+	assert.Contains(t, logOf(t, app, job.ID), "error Translating to de failed: model refused")
+}
+
+func TestTranslateFailsWhenTheSourceSubtitleIsGone(t *testing.T) {
+	app, runner := newJobApp(t, &fakeTools{})
+	videoID := addTestVideo(t, app)
+	storeEnglishSubtitle(t, app, videoID, "en")
+	job := decodeJob(t, translateRequest(app, videoID, map[string]any{"source_language": "en", "languages": []string{"tr"}}))
+
+	subtitles, err := app.repo.GetSubtitlesByVideoID(context.Background(), videoID)
+	require.NoError(t, err)
+	require.NoError(t, app.repo.DeleteSubtitle(context.Background(), subtitles[0].ID))
+	runQueued(t, runner)
+
+	finished, err := app.repo.GetJob(context.Background(), job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, jobFailed, finished.Status)
+	assert.Equal(t, "the video has no en subtitle to translate", finished.Error)
+}
+
+func TestJobRequestValidation(t *testing.T) {
 	app, _ := newJobApp(t, &fakeTools{})
 	videoID := addTestVideo(t, app)
+	storeEnglishSubtitle(t, app, videoID, "en")
 
-	if rec := app.postJSON(fmt.Sprintf("/api/admin/videos/%d/generate", videoID), map[string]any{}, false); rec.Code != 401 {
-		t.Fatalf("without login: %d", rec.Code)
+	transcribePath := fmt.Sprintf("/api/admin/videos/%d/transcribe", videoID)
+	translatePath := fmt.Sprintf("/api/admin/videos/%d/translate", videoID)
+	for _, path := range []string{transcribePath, translatePath} {
+		assert.Equal(t, 401, app.postJSON(path, map[string]any{}, false).Code, "%s without login", path)
 	}
+
 	tooMany := make([]string, maxTargetLanguages+1)
 	for position := range tooMany {
 		tooMany[position] = "tr"
@@ -356,94 +387,95 @@ func TestGenerateRequestValidation(t *testing.T) {
 		status  int
 		message string
 	}{
-		"bad id":          {"/api/admin/videos/abc/generate", map[string]any{}, 400, "Invalid ID"},
-		"unknown video":   {"/api/admin/videos/999/generate", map[string]any{}, 404, "Video not found"},
-		"bad language":    {fmt.Sprintf("/api/admin/videos/%d/generate", videoID), map[string]any{"languages": []string{"turkish!"}}, 400, "Invalid language code"},
-		"bad source":      {fmt.Sprintf("/api/admin/videos/%d/generate", videoID), map[string]any{"source_language": "x"}, 400, "Invalid source language"},
-		"too many":        {fmt.Sprintf("/api/admin/videos/%d/generate", videoID), map[string]any{"languages": tooMany}, 400, "Too many languages"},
-		"wrong json type": {fmt.Sprintf("/api/admin/videos/%d/generate", videoID), map[string]any{"languages": "tr"}, 400, "Invalid request"},
+		"transcribe: bad id":            {"/api/admin/videos/abc/transcribe", map[string]any{}, 400, "Invalid ID"},
+		"transcribe: unknown video":     {"/api/admin/videos/999/transcribe", map[string]any{}, 404, "Video not found"},
+		"transcribe: bad source":        {transcribePath, map[string]any{"source_language": "x"}, 400, "Invalid source language"},
+		"translate: bad id":             {"/api/admin/videos/abc/translate", map[string]any{"source_language": "en", "languages": []string{"tr"}}, 400, "Invalid ID"},
+		"translate: unknown video":      {"/api/admin/videos/999/translate", map[string]any{"source_language": "en", "languages": []string{"tr"}}, 404, "Video not found"},
+		"translate: no source":          {translatePath, map[string]any{"languages": []string{"tr"}}, 400, "Invalid source language"},
+		"translate: bad source":         {translatePath, map[string]any{"source_language": "english", "languages": []string{"tr"}}, 400, "Invalid source language"},
+		"translate: source missing":     {translatePath, map[string]any{"source_language": "fr", "languages": []string{"tr"}}, 400, "The video has no subtitle in that language"},
+		"translate: no targets":         {translatePath, map[string]any{"source_language": "en", "languages": []string{}}, 400, "Pick at least one language to translate into"},
+		"translate: only the source":    {translatePath, map[string]any{"source_language": "en", "languages": []string{"en"}}, 400, "Pick at least one language to translate into"},
+		"translate: bad language":       {translatePath, map[string]any{"source_language": "en", "languages": []string{"turkish!"}}, 400, "Invalid language code"},
+		"translate: too many languages": {translatePath, map[string]any{"source_language": "en", "languages": tooMany}, 400, "Too many languages"},
+		"translate: wrong json type":    {translatePath, map[string]any{"source_language": "en", "languages": "tr"}, 400, "Invalid request"},
 	} {
 		rec := app.postJSON(tc.path, tc.payload, true)
-		if rec.Code != tc.status || errorMessage(t, rec) != tc.message {
-			t.Errorf("%s: %d %q", name, rec.Code, rec.Body.String())
-		}
+		assert.Equal(t, tc.status, rec.Code, "%s: %s", name, rec.Body.String())
+		assert.Equal(t, tc.message, errorMessage(t, rec), name)
 	}
-	if jobs, _ := app.repo.ListJobs(context.Background(), 10); len(jobs) != 0 {
-		t.Errorf("rejected requests queued %d jobs", len(jobs))
-	}
+
+	jobs, err := app.repo.ListJobs(context.Background(), 10)
+	require.NoError(t, err)
+	assert.Empty(t, jobs, "rejected requests queue nothing")
 }
 
-func TestGenerateRefusesDuplicateAndUnconfiguredJobs(t *testing.T) {
+func TestJobsAreRefusedWhileAnotherIsActiveOrNothingIsConfigured(t *testing.T) {
 	app, runner := newJobApp(t, &fakeTools{})
 	videoID := addTestVideo(t, app)
+	storeEnglishSubtitle(t, app, videoID, "en")
+	translation := map[string]any{"source_language": "en", "languages": []string{"tr"}}
 
-	if rec := generate(app, videoID, map[string]any{}); rec.Code != 202 {
-		t.Fatalf("first: %d", rec.Code)
+	require.Equal(t, 202, transcribeRequest(app, videoID, map[string]any{}).Code)
+	for _, rec := range []*httptest.ResponseRecorder{transcribeRequest(app, videoID, map[string]any{}), translateRequest(app, videoID, translation)} {
+		assert.Equal(t, 409, rec.Code)
+		assert.Contains(t, errorMessage(t, rec), "already")
 	}
-	if rec := generate(app, videoID, map[string]any{}); rec.Code != 409 || !strings.Contains(errorMessage(t, rec), "already") {
-		t.Fatalf("second while queued: %d %q", rec.Code, rec.Body.String())
-	}
-	if err := runner.drain(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if rec := generate(app, videoID, map[string]any{}); rec.Code != 202 {
-		t.Fatalf("after it finished: %d", rec.Code)
-	}
+	runQueued(t, runner)
+	assert.Equal(t, 202, translateRequest(app, videoID, translation).Code, "after the first job is over")
 
 	unconfigured, _ := newJobApp(t, &fakeTools{ready: errors.New("OPENROUTER_API_KEY is not set")})
 	id := addTestVideo(t, unconfigured)
-	if rec := generate(unconfigured, id, map[string]any{}); rec.Code != 503 || errorMessage(t, rec) != "OPENROUTER_API_KEY is not set" {
-		t.Fatalf("unconfigured: %d %q", rec.Code, rec.Body.String())
+	storeEnglishSubtitle(t, unconfigured, id, "en")
+	for _, rec := range []*httptest.ResponseRecorder{transcribeRequest(unconfigured, id, map[string]any{}), translateRequest(unconfigured, id, translation)} {
+		assert.Equal(t, 503, rec.Code)
+		assert.Equal(t, "OPENROUTER_API_KEY is not set", errorMessage(t, rec))
 	}
 }
 
 func TestJobsAndLogsEndpoints(t *testing.T) {
 	app, runner := newJobApp(t, &fakeTools{})
 	videoID := addTestVideo(t, app)
-	first := decodeJob(t, generate(app, videoID, map[string]any{"languages": []string{"tr"}}))
-	if err := runner.drain(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	second := decodeJob(t, generate(app, videoID, map[string]any{}))
+	first := decodeJob(t, transcribeRequest(app, videoID, map[string]any{}))
+	runQueued(t, runner)
+	second := decodeJob(t, translateRequest(app, videoID, map[string]any{"source_language": "en", "languages": []string{"tr"}}))
 
-	if rec := app.do(http.MethodGet, "/api/admin/jobs", nil, nil, false); rec.Code != 401 {
-		t.Fatalf("jobs without login: %d", rec.Code)
-	}
+	assert.Equal(t, 401, app.do(http.MethodGet, "/api/admin/jobs", nil, nil, false).Code)
 	var jobs []Job
 	rec := app.do(http.MethodGet, "/api/admin/jobs", nil, nil, true)
-	if err := json.Unmarshal(rec.Body.Bytes(), &jobs); err != nil || len(jobs) != 2 {
-		t.Fatalf("jobs: %v %q", err, rec.Body.String())
-	}
-	if jobs[0].ID != second.ID || jobs[0].Status != jobQueued || jobs[1].ID != first.ID || jobs[1].Status != jobDone || jobs[1].VideoTitle != "Me at the zoo" {
-		t.Errorf("jobs = %+v", jobs)
-	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &jobs), rec.Body.String())
+	require.Len(t, jobs, 2)
+	assert.Equal(t, second.ID, jobs[0].ID, "newest first")
+	assert.Equal(t, jobTranslate, jobs[0].Kind)
+	assert.Equal(t, jobQueued, jobs[0].Status)
+	assert.Equal(t, first.ID, jobs[1].ID)
+	assert.Equal(t, jobTranscribe, jobs[1].Kind)
+	assert.Equal(t, jobDone, jobs[1].Status)
+	assert.Equal(t, "Me at the zoo", jobs[1].VideoTitle)
 
 	logsPath := fmt.Sprintf("/api/admin/jobs/%d/logs", first.ID)
-	if rec := app.do(http.MethodGet, logsPath, nil, nil, false); rec.Code != 401 {
-		t.Fatalf("logs without login: %d", rec.Code)
-	}
+	assert.Equal(t, 401, app.do(http.MethodGet, logsPath, nil, nil, false).Code)
 	var all struct {
 		Job  Job
 		Logs []JobLog
 	}
 	rec = app.do(http.MethodGet, logsPath, nil, nil, true)
-	if err := json.Unmarshal(rec.Body.Bytes(), &all); err != nil || all.Job.Status != jobDone || len(all.Logs) < 5 {
-		t.Fatalf("logs: %v %q", err, rec.Body.String())
-	}
-	if all.Logs[0].Message != "Started: Me at the zoo" || all.Logs[0].At == 0 || all.Logs[0].Level != logInfo {
-		t.Errorf("first line = %+v", all.Logs[0])
-	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &all), rec.Body.String())
+	assert.Equal(t, jobDone, all.Job.Status)
+	require.GreaterOrEqual(t, len(all.Logs), 5)
+	assert.Equal(t, "Started: Me at the zoo", all.Logs[0].Message)
+	assert.NotZero(t, all.Logs[0].At)
+	assert.Equal(t, logInfo, all.Logs[0].Level)
 
 	// polling with the id of the last line seen returns only what is new
 	var rest struct{ Logs []JobLog }
 	rec = app.do(http.MethodGet, fmt.Sprintf("%s?after=%d", logsPath, all.Logs[2].ID), nil, nil, true)
-	if err := json.Unmarshal(rec.Body.Bytes(), &rest); err != nil || len(rest.Logs) != len(all.Logs)-3 || rest.Logs[0].ID != all.Logs[3].ID {
-		t.Fatalf("after: %v %q", err, rec.Body.String())
-	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &rest), rec.Body.String())
+	require.Len(t, rest.Logs, len(all.Logs)-3)
+	assert.Equal(t, all.Logs[3].ID, rest.Logs[0].ID)
 	rec = app.do(http.MethodGet, fmt.Sprintf("%s?after=%d", logsPath, all.Logs[len(all.Logs)-1].ID), nil, nil, true)
-	if !strings.Contains(rec.Body.String(), `"logs":[]`) {
-		t.Errorf("nothing new: %q", rec.Body.String())
-	}
+	assert.Contains(t, rec.Body.String(), `"logs":[]`)
 
 	for path, status := range map[string]int{
 		"/api/admin/jobs/999/logs": 404,
@@ -451,42 +483,41 @@ func TestJobsAndLogsEndpoints(t *testing.T) {
 		logsPath + "?after=x":      400,
 		logsPath + "?after=-1":     400,
 	} {
-		if rec := app.do(http.MethodGet, path, nil, nil, true); rec.Code != status {
-			t.Errorf("%s: %d, want %d", path, rec.Code, status)
-		}
+		assert.Equal(t, status, app.do(http.MethodGet, path, nil, nil, true).Code, path)
 	}
+}
+
+// waitForStatus polls until the job has the status, so a test can wait for the background runner.
+func waitForStatus(t *testing.T, app *testApp, id int64, status string) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		job, err := app.repo.GetJob(context.Background(), id)
+		return err == nil && job.Status == status
+	}, 5*time.Second, 10*time.Millisecond, "job %d never became %s", id, status)
 }
 
 func TestInterruptedJobsAreFailedOnStart(t *testing.T) {
 	app, runner := newJobApp(t, &fakeTools{})
 	videoID := addTestVideo(t, app)
 	ctx := context.Background()
-	running, _ := app.repo.CreateJob(ctx, videoID, []string{}, "")
-	if claimed, err := app.repo.ClaimNextJob(ctx); err != nil || claimed.ID != running {
-		t.Fatalf("claim: %+v %v", claimed, err)
-	}
-	queued, _ := app.repo.CreateJob(ctx, videoID, []string{}, "")
+	running, err := app.repo.CreateJob(ctx, jobTranscribe, videoID, nil, "")
+	require.NoError(t, err)
+	claimed, err := app.repo.ClaimNextJob(ctx)
+	require.NoError(t, err)
+	require.Equal(t, running, claimed.ID)
+	queued, err := app.repo.CreateJob(ctx, jobTranscribe, videoID, nil, "")
+	require.NoError(t, err)
 
 	runCtx, stop := context.WithCancel(ctx)
 	runner.Start(runCtx)
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		job, _ := app.repo.GetJob(ctx, queued)
-		if job.Status == jobDone {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("queued job is %q", job.Status)
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+	waitForStatus(t, app, queued, jobDone)
 	stop()
 	runner.Wait()
 
-	interrupted, _ := app.repo.GetJob(ctx, running)
-	if interrupted.Status != jobFailed || interrupted.Error != "Interrupted by a restart" {
-		t.Errorf("interrupted job = %+v", interrupted)
-	}
+	interrupted, err := app.repo.GetJob(ctx, running)
+	require.NoError(t, err)
+	assert.Equal(t, jobFailed, interrupted.Status)
+	assert.Equal(t, "Interrupted by a restart", interrupted.Error)
 }
 
 func TestRunnerPicksUpJobsAddedWhileRunning(t *testing.T) {
@@ -495,23 +526,11 @@ func TestRunnerPicksUpJobsAddedWhileRunning(t *testing.T) {
 	ctx, stop := context.WithCancel(context.Background())
 	runner.Start(ctx)
 
-	job := decodeJob(t, generate(app, videoID, map[string]any{"languages": []string{"tr"}}))
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		current, _ := app.repo.GetJob(context.Background(), job.ID)
-		if current.Status == jobDone {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("job is %q", current.Status)
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+	job := decodeJob(t, transcribeRequest(app, videoID, map[string]any{}))
+	waitForStatus(t, app, job.ID, jobDone)
 	stop()
 	runner.Wait()
-	if contents := subtitleContents(t, app, videoID); len(contents) != 2 {
-		t.Errorf("subtitles = %v", contents)
-	}
+	assert.Contains(t, subtitleContents(t, app, videoID), "en")
 }
 
 func TestStoppingTheServerLeavesARunningJobForRecovery(t *testing.T) {
@@ -523,7 +542,7 @@ func TestStoppingTheServerLeavesARunningJobForRecovery(t *testing.T) {
 	}}
 	app, runner := newJobApp(t, tools)
 	videoID := addTestVideo(t, app)
-	job := decodeJob(t, generate(app, videoID, map[string]any{}))
+	job := decodeJob(t, transcribeRequest(app, videoID, map[string]any{}))
 
 	ctx, stop := context.WithCancel(context.Background())
 	runner.Start(ctx)
@@ -531,48 +550,36 @@ func TestStoppingTheServerLeavesARunningJobForRecovery(t *testing.T) {
 	stop()
 	runner.Wait()
 
-	current, _ := app.repo.GetJob(context.Background(), job.ID)
-	if current.Status != jobRunning {
-		t.Errorf("status = %q, want it left running so the next start fails it as interrupted", current.Status)
-	}
+	current, err := app.repo.GetJob(context.Background(), job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, jobRunning, current.Status, "left running, so the next start fails it as interrupted")
 }
 
 func TestDeletingAVideoDeletesItsJobs(t *testing.T) {
 	app, runner := newJobApp(t, &fakeTools{})
 	videoID := addTestVideo(t, app)
-	job := decodeJob(t, generate(app, videoID, map[string]any{}))
-	if err := runner.drain(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	job := decodeJob(t, transcribeRequest(app, videoID, map[string]any{}))
+	runQueued(t, runner)
 
-	if rec := app.do(http.MethodDelete, fmt.Sprintf("/api/admin/videos/%d", videoID), nil, nil, true); rec.Code != 200 {
-		t.Fatalf("delete: %d", rec.Code)
-	}
-	if jobs, _ := app.repo.ListJobs(context.Background(), 10); len(jobs) != 0 {
-		t.Errorf("%d jobs left", len(jobs))
-	}
-	if logs, _ := app.repo.ListJobLogs(context.Background(), job.ID, 0, 10); len(logs) != 0 {
-		t.Errorf("%d log lines left", len(logs))
-	}
+	require.Equal(t, 200, app.do(http.MethodDelete, fmt.Sprintf("/api/admin/videos/%d", videoID), nil, nil, true).Code)
+	jobs, err := app.repo.ListJobs(context.Background(), 10)
+	require.NoError(t, err)
+	assert.Empty(t, jobs)
+	logs, err := app.repo.ListJobLogs(context.Background(), job.ID, 0, 10)
+	require.NoError(t, err)
+	assert.Empty(t, logs)
 }
 
 func TestUniqueLanguages(t *testing.T) {
-	got := uniqueLanguages([]string{"tr", "en", "tr", "de", "en"}, "en")
-	if strings.Join(got, ",") != "tr,de" {
-		t.Errorf("got %v", got)
-	}
+	assert.Equal(t, []string{"tr", "de"}, uniqueLanguages([]string{"tr", "en", "tr", "de", "en"}, "en"))
 }
 
 func TestLanguageNames(t *testing.T) {
-	if languageName("tr") != "Turkish" || languageName("pt-br") != "Brazilian Portuguese" {
-		t.Error("known names")
-	}
-	if got := languageName("xx"); !strings.Contains(got, `"xx"`) {
-		t.Errorf("unknown code described as %q", got)
-	}
+	assert.Equal(t, "Turkish", languageName("tr"))
+	assert.Equal(t, "Brazilian Portuguese", languageName("pt-br"))
+	assert.Contains(t, languageName("xx"), `"xx"`, "an unknown code is described by itself")
+
 	for code, valid := range map[string]bool{"en": true, "pt-br": true, "eng": true, "e": false, "EN": false, "en_US": false, "english": false, "": false} {
-		if languageCodePattern.MatchString(code) != valid {
-			t.Errorf("%q valid = %v, want %v", code, !valid, valid)
-		}
+		assert.Equal(t, valid, languageCodePattern.MatchString(code), "%q", code)
 	}
 }

@@ -211,8 +211,9 @@ Admin (needs the session cookie; without it the API answers `401`, and `/admin` 
 - `DELETE /api/admin/videos/:id`: delete a video and its subtitles
 - `POST /api/admin/subtitles`: upload a subtitle, multipart form with `video_id`, `language`, `type` (`srt` or `vtt`) and `file`
 - `DELETE /api/admin/subtitles/:id`: delete a subtitle (uploading a language again replaces that language's subtitle)
-- `POST /api/admin/videos/:id/generate`: queue a job, JSON body `{ "languages": ["tr", "de"], "source_language": "en" }`. `source_language` is optional (empty detects it). Answers `202` with the job; `409` if the video already has a queued or running job, `503` if `OPENROUTER_API_KEY` is not set.
-- `GET /api/admin/jobs`: the 50 newest jobs, each with `status` (`queued`, `running`, `done` or `failed`), `languages`, `error` and `created_at`
+- `POST /api/admin/videos/:id/transcribe`: queue a job that downloads the audio and transcribes it into a subtitle, JSON body `{ "source_language": "en" }`. `source_language` is optional (empty detects it). Answers `202` with the job; `409` if the video already has a queued or running job, `503` if `OPENROUTER_API_KEY` is not set.
+- `POST /api/admin/videos/:id/translate`: queue a job that translates one of the video's existing subtitles, JSON body `{ "source_language": "en", "languages": ["tr", "de"] }`. Both are required, and the video must have a subtitle in `source_language` (`400` otherwise). Same `202`, `409` and `503` answers.
+- `GET /api/admin/jobs`: the 50 newest jobs, each with `kind` (`transcribe` or `translate`), `status` (`queued`, `running`, `done` or `failed`), `languages`, `source_language`, `error` and `created_at`
 - `GET /api/admin/jobs/:id/logs?after=LOG_ID`: the job and the log lines after the one with that id (`{ "job": {...}, "logs": [{ "id", "at", "level", "message" }] }`), so a page can poll
 - `GET /api/admin/cookies`: how many cookies are stored and for which domains, as `{ "count": 2, "domains": ["youtube.com"] }`; never the values
 - `PUT /api/admin/cookies`: JSON body `{ "cookies": "<text of a Netscape cookies.txt>" }`; upserts by domain and name

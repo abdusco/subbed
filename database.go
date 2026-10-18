@@ -137,6 +137,7 @@ func (r *Repository) initDB() error {
 		CREATE TABLE IF NOT EXISTS jobs (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			video_id INTEGER NOT NULL,
+			kind TEXT NOT NULL,
 			status TEXT NOT NULL,
 			languages TEXT NOT NULL,
 			source_language TEXT NOT NULL DEFAULT '',
@@ -192,6 +193,22 @@ func (r *Repository) GetVideoByURL(ctx context.Context, videoID string) (*Video,
 	}
 
 	return &video, nil
+}
+
+// GetSubtitle returns a video's subtitle in one language, or sql.ErrNoRows.
+func (r *Repository) GetSubtitle(ctx context.Context, videoID int, language string) (*Subtitle, error) {
+	var subtitle Subtitle
+	found, err := r.db.From("subtitles").
+		Select("id", "video_id", "language", "type", "content").
+		Where(goqu.C("video_id").Eq(videoID), goqu.C("language").Eq(language)).
+		ScanStructContext(ctx, &subtitle)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query subtitle: %w", err)
+	}
+	if !found {
+		return nil, sql.ErrNoRows
+	}
+	return &subtitle, nil
 }
 
 // GetSubtitlesByVideoID retrieves all subtitles for a given video ID

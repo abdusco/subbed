@@ -10,6 +10,12 @@ import (
 	"github.com/doug-martin/goqu/v9"
 )
 
+// A transcribe job turns a video's audio into a subtitle; a translate job turns one of its subtitles into others.
+const (
+	jobTranscribe = "transcribe"
+	jobTranslate  = "translate"
+)
+
 const (
 	jobQueued  = "queued"
 	jobRunning = "running"
@@ -27,12 +33,15 @@ type Job struct {
 	ID         int64  `json:"id" db:"id"`
 	VideoID    int    `json:"video_id" db:"video_id"`
 	VideoTitle string `json:"video_title" db:"video_title"`
+	// Kind is transcribe or translate
+	Kind string `json:"kind" db:"kind"`
 	// Status is queued, running, done or failed
 	Status string `json:"status" db:"status"`
-	// Languages are the translation targets
+	// Languages are the translation targets; a transcribe job has none
 	Languages     []string `json:"languages" db:"-"`
 	LanguagesJSON string   `json:"-" db:"languages"`
-	// SourceLanguage is what the admin said the video is spoken in; empty means detect it
+	// SourceLanguage is what a transcribe job's video is spoken in (empty means detect it), or the language
+	// of the existing subtitle that a translate job translates
 	SourceLanguage string `json:"source_language" db:"source_language"`
 	Error          string `json:"error" db:"error"`
 	CreatedAt      int64  `json:"created_at" db:"created_at"`
@@ -66,6 +75,7 @@ func (r *Repository) jobQuery() *goqu.SelectDataset {
 			goqu.I("jobs.id").As("id"),
 			goqu.I("jobs.video_id").As("video_id"),
 			goqu.I("videos.title").As("video_title"),
+			goqu.I("jobs.kind").As("kind"),
 			goqu.I("jobs.status").As("status"),
 			goqu.I("jobs.languages").As("languages"),
 			goqu.I("jobs.source_language").As("source_language"),
@@ -76,7 +86,10 @@ func (r *Repository) jobQuery() *goqu.SelectDataset {
 }
 
 // CreateJob queues a job.
-func (r *Repository) CreateJob(ctx context.Context, videoID int, languages []string, sourceLanguage string) (int64, error) {
+func (r *Repository) CreateJob(ctx context.Context, kind string, videoID int, languages []string, sourceLanguage string) (int64, error) {
+	if languages == nil {
+		languages = []string{}
+	}
 	encoded, err := json.Marshal(languages)
 	if err != nil {
 		return 0, err
@@ -84,7 +97,7 @@ func (r *Repository) CreateJob(ctx context.Context, videoID int, languages []str
 	now := time.Now().Unix()
 	result, err := r.db.Insert("jobs").
 		Rows(goqu.Record{
-			"video_id": videoID, "status": jobQueued, "languages": string(encoded), "source_language": sourceLanguage,
+			"video_id": videoID, "kind": kind, "status": jobQueued, "languages": string(encoded), "source_language": sourceLanguage,
 			"error": "", "created_at": now, "updated_at": now,
 		}).
 		Executor().

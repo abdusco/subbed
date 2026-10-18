@@ -16,24 +16,35 @@ const (
 	jobLogsPageSize    = 500
 )
 
-// generateSubtitles queues a job that transcribes the video and translates the result.
-func generateSubtitles(repo *Repository, runner *JobRunner) echo.HandlerFunc {
+// transcribeVideo queues a job that turns the video's audio into a subtitle in the spoken language.
+func transcribeVideo(repo *Repository, runner *JobRunner) echo.HandlerFunc {
 	return func(c echo.Context) error {
-		ctx := c.Request().Context()
-		videoID, err := strconv.Atoi(c.Param("id"))
-		if err != nil {
-			return echo.NewHTTPError(http.StatusBadRequest, "Invalid ID")
-		}
-
 		var req struct {
-			Languages      []string `json:"languages"`
-			SourceLanguage string   `json:"source_language"`
+			SourceLanguage string `json:"source_language"`
 		}
 		if err := c.Bind(&req); err != nil {
 			return echo.NewHTTPError(http.StatusBadRequest, "Invalid request")
 		}
 		source := strings.ToLower(strings.TrimSpace(req.SourceLanguage))
 		if source != "" && !languageCodePattern.MatchString(source) {
+			return echo.NewHTTPError(http.StatusBadRequest, "Invalid source language")
+		}
+		return queueJob(c, repo, runner, jobTranscribe, source, nil)
+	}
+}
+
+// translateVideo queues a job that translates one of the video's subtitles into other languages.
+func translateVideo(repo *Repository, runner *JobRunner) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		var req struct {
+			SourceLanguage string   `json:"source_language"`
+			Languages      []string `json:"languages"`
+		}
+		if err := c.Bind(&req); err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, "Invalid request")
+		}
+		source := strings.ToLower(strings.TrimSpace(req.SourceLanguage))
+		if !languageCodePattern.MatchString(source) {
 			return echo.NewHTTPError(http.StatusBadRequest, "Invalid source language")
 		}
 		if len(req.Languages) > maxTargetLanguages {
@@ -46,32 +57,52 @@ func generateSubtitles(repo *Repository, runner *JobRunner) echo.HandlerFunc {
 				return echo.NewHTTPError(http.StatusBadRequest, "Invalid language code")
 			}
 		}
+		if targets = uniqueLanguages(targets, source); len(targets) == 0 {
+			return echo.NewHTTPError(http.StatusBadRequest, "Pick at least one language to translate into")
+		}
+		return queueJob(c, repo, runner, jobTranslate, source, targets)
+	}
+}
 
-		if _, err := repo.GetVideoByID(ctx, videoID); errors.Is(err, sql.ErrNoRows) {
-			return echo.NewHTTPError(http.StatusNotFound, "Video not found")
+// queueJob checks that the video exists, that there is something to work with and that no other job is going for
+// the video, then queues the job and answers with it. The request's :id is the video.
+func queueJob(c echo.Context, repo *Repository, runner *JobRunner, kind, source string, targets []string) error {
+	ctx := c.Request().Context()
+	videoID, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "Invalid ID")
+	}
+	if _, err := repo.GetVideoByID(ctx, videoID); errors.Is(err, sql.ErrNoRows) {
+		return echo.NewHTTPError(http.StatusNotFound, "Video not found")
+	} else if err != nil {
+		return err
+	}
+	if kind == jobTranslate {
+		if _, err := repo.GetSubtitle(ctx, videoID, source); errors.Is(err, sql.ErrNoRows) {
+			return echo.NewHTTPError(http.StatusBadRequest, "The video has no subtitle in that language")
 		} else if err != nil {
 			return err
 		}
-		if err := runner.tools.Ready(); err != nil {
-			return echo.NewHTTPError(http.StatusServiceUnavailable, err.Error())
-		}
-		if active, err := repo.HasActiveJob(ctx, videoID); err != nil {
-			return err
-		} else if active {
-			return echo.NewHTTPError(http.StatusConflict, "A job for this video is already queued or running")
-		}
-
-		id, err := repo.CreateJob(ctx, videoID, uniqueLanguages(targets, source), source)
-		if err != nil {
-			return err
-		}
-		runner.Notify()
-		job, err := repo.GetJob(ctx, id)
-		if err != nil {
-			return err
-		}
-		return c.JSON(http.StatusAccepted, job)
 	}
+	if err := runner.tools.Ready(); err != nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, err.Error())
+	}
+	if active, err := repo.HasActiveJob(ctx, videoID); err != nil {
+		return err
+	} else if active {
+		return echo.NewHTTPError(http.StatusConflict, "A job for this video is already queued or running")
+	}
+
+	id, err := repo.CreateJob(ctx, kind, videoID, targets, source)
+	if err != nil {
+		return err
+	}
+	runner.Notify()
+	job, err := repo.GetJob(ctx, id)
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusAccepted, job)
 }
 
 func listJobs(repo *Repository) echo.HandlerFunc {

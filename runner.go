@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -125,7 +126,15 @@ func (j *JobRunner) drain(ctx context.Context) error {
 func (j *JobRunner) run(ctx context.Context, job *Job) {
 	log := &jobLog{repo: j.repo, logger: j.logger, jobID: job.ID}
 	log.info(ctx, "Started: %s", job.VideoTitle)
-	err := j.process(ctx, job, log)
+	var err error
+	switch job.Kind {
+	case jobTranscribe:
+		err = j.transcribe(ctx, job, log)
+	case jobTranslate:
+		err = j.translateExisting(ctx, job, log)
+	default:
+		err = fmt.Errorf("unknown job kind %q", job.Kind)
+	}
 	if ctx.Err() != nil {
 		// the server is stopping; the job is failed as interrupted when it starts again
 		return
@@ -142,9 +151,8 @@ func (j *JobRunner) run(ctx context.Context, job *Job) {
 	}
 }
 
-// process downloads the audio, transcribes it and stores the subtitle, then translates it into each target
-// language. A failed translation does not stop the others; the job then fails at the end.
-func (j *JobRunner) process(ctx context.Context, job *Job, log *jobLog) error {
+// transcribe downloads the video's audio, transcribes it and stores the subtitle in the spoken language.
+func (j *JobRunner) transcribe(ctx context.Context, job *Job, log *jobLog) error {
 	video, err := j.repo.GetVideoByID(ctx, job.VideoID)
 	if err != nil {
 		return fmt.Errorf("couldn't load the video: %w", err)
@@ -198,10 +206,24 @@ func (j *JobRunner) process(ctx context.Context, job *Job, log *jobLog) error {
 		return err
 	}
 	log.info(ctx, "Saved the %s subtitle (%d cues)", source, transcript.Cues)
+	return nil
+}
+
+// translateExisting translates one of the video's subtitles into each target language. A failed translation does
+// not stop the others; the job then fails at the end.
+func (j *JobRunner) translateExisting(ctx context.Context, job *Job, log *jobLog) error {
+	source, err := j.repo.GetSubtitle(ctx, job.VideoID, job.SourceLanguage)
+	if errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("the video has no %s subtitle to translate", job.SourceLanguage)
+	}
+	if err != nil {
+		return err
+	}
+	log.info(ctx, "Translating the %s subtitle", source.Language)
 
 	var failed []string
-	for _, target := range uniqueLanguages(job.Languages, source) {
-		if err := j.translate(ctx, video.ID, transcript.SRT, target, log); err != nil {
+	for _, target := range uniqueLanguages(job.Languages, source.Language) {
+		if err := j.translate(ctx, job.VideoID, source.Content, target, log); err != nil {
 			log.error(ctx, "Translating to %s failed: %v", target, err)
 			failed = append(failed, target)
 		}

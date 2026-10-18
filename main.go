@@ -256,7 +256,8 @@ func newServer(cfg serverConfig) *echo.Echo {
 	admin.GET("/settings", getSettings(cfg.repo))
 	admin.PUT("/settings", updateSettings(cfg.repo))
 	if cfg.jobs != nil {
-		admin.POST("/videos/:id/generate", generateSubtitles(cfg.repo, cfg.jobs))
+		admin.POST("/videos/:id/transcribe", transcribeVideo(cfg.repo, cfg.jobs))
+		admin.POST("/videos/:id/translate", translateVideo(cfg.repo, cfg.jobs))
 		admin.GET("/jobs", listJobs(cfg.repo))
 		admin.GET("/jobs/:id/logs", getJobLogs(cfg.repo))
 	}
