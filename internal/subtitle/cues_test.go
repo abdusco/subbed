@@ -1,10 +1,12 @@
 package subtitle
 
 import (
-	"reflect"
 	"strings"
 	"testing"
 	"unicode/utf8"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestSplitSentences(t *testing.T) {
@@ -25,90 +27,61 @@ func TestSplitSentences(t *testing.T) {
 		{"turkish abbreviation", "Doç. Ahmet geldi. Sonra gitti.", []string{"Doç. Ahmet geldi.", "Sonra gitti."}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := splitSentences(tc.text); !reflect.DeepEqual(got, tc.want) {
-				t.Errorf("splitSentences(%q) = %q, want %q", tc.text, got, tc.want)
-			}
+			assert.Equal(t, tc.want, splitSentences(tc.text))
 		})
 	}
 }
 
 func TestSplitCue(t *testing.T) {
 	t.Run("single sentence is unchanged", func(t *testing.T) {
-		got := splitCue(1, 5, "Hello there.")
-		if !reflect.DeepEqual(got, []timedText{{1, 5, "Hello there."}}) {
-			t.Errorf("got %+v", got)
-		}
+		assert.Equal(t, []timedText{{1, 5, "Hello there."}}, splitCue(1, 5, "Hello there."))
 	})
 	t.Run("time is divided by length and pieces are contiguous", func(t *testing.T) {
 		got := splitCue(0, 10, "Aaaaaaaaaaaaaaaaaaaa. Bbbbbbbbbbbbbbbbbbbb.")
-		if len(got) != 2 || got[0].start != 0 || got[1].end != 10 || got[0].end != got[1].start {
-			t.Fatalf("got %+v", got)
-		}
-		if got[0].end < 4.5 || got[0].end > 5.5 {
-			t.Errorf("boundary = %v, want about 5", got[0].end)
-		}
+		require.Len(t, got, 2)
+		assert.Equal(t, 0.0, got[0].start)
+		assert.Equal(t, 10.0, got[1].end)
+		assert.Equal(t, got[0].end, got[1].start)
+		assert.InDelta(t, 5, got[0].end, 0.5)
 	})
 	t.Run("short pieces are merged into their neighbour", func(t *testing.T) {
-		got := splitCue(0, 3, "Yes. That is what we are going to do now.")
-		if len(got) != 1 || got[0].text != "Yes. That is what we are going to do now." || got[0].end != 3 {
-			t.Errorf("got %+v", got)
-		}
+		assert.Equal(t, []timedText{{0, 3, "Yes. That is what we are going to do now."}}, splitCue(0, 3, "Yes. That is what we are going to do now."))
 	})
 }
 
 func TestWrapText(t *testing.T) {
-	short := "Short line."
-	if got := wrapText(short); got != short {
-		t.Errorf("short text changed: %q", got)
-	}
+	assert.Equal(t, "Short line.", wrapText("Short line."))
+
 	long := "This sentence is long enough that it needs two balanced lines."
-	got := wrapText(long)
-	lines := strings.Split(got, "\n")
-	if len(lines) != 2 {
-		t.Fatalf("lines = %q", lines)
-	}
+	lines := strings.Split(wrapText(long), "\n")
+	require.Len(t, lines, 2)
 	for _, line := range lines {
-		if utf8.RuneCountInString(line) > lineLength {
-			t.Errorf("line too long: %q", line)
-		}
+		assert.LessOrEqual(t, utf8.RuneCountInString(line), lineLength, line)
 	}
 	// balanced: the lines differ by far less than the greedy 42/20 split would
-	if diff := utf8.RuneCountInString(lines[0]) - utf8.RuneCountInString(lines[1]); diff > 12 || diff < -12 {
-		t.Errorf("unbalanced lines: %q", lines)
-	}
-	if strings.Join(lines, " ") != long {
-		t.Errorf("words changed: %q", got)
-	}
+	assert.InDelta(t, utf8.RuneCountInString(lines[0]), utf8.RuneCountInString(lines[1]), 12)
+	assert.Equal(t, long, strings.Join(lines, " "), "no words are changed")
 }
 
 func TestSplitLong(t *testing.T) {
 	text := "First part of the long cue, which goes on for a while, and then the second part continues for quite some time too."
 	pieces := splitLong(0, 12, text)
-	if len(pieces) < 2 {
-		t.Fatalf("not split: %+v", pieces)
-	}
-	if pieces[0].start != 0 || pieces[len(pieces)-1].end != 12 {
-		t.Errorf("span changed: %+v", pieces)
-	}
+	require.GreaterOrEqual(t, len(pieces), 2, "the cue is split")
+	assert.Equal(t, 0.0, pieces[0].start)
+	assert.Equal(t, 12.0, pieces[len(pieces)-1].end)
+
 	var texts []string
 	for index, piece := range pieces {
-		if utf8.RuneCountInString(piece.text) > lineLength*maxLines {
-			t.Errorf("piece too long: %q", piece.text)
-		}
-		if index > 0 && piece.start != pieces[index-1].end {
-			t.Errorf("gap before %+v", piece)
+		assert.LessOrEqual(t, utf8.RuneCountInString(piece.text), lineLength*maxLines, piece.text)
+		if index > 0 {
+			assert.Equal(t, pieces[index-1].end, piece.start, "the pieces are contiguous")
 		}
 		texts = append(texts, piece.text)
 	}
-	if strings.Join(texts, " ") != text {
-		t.Errorf("text changed: %q", texts)
-	}
-	if got := splitLong(0, 1, "short"); len(got) != 1 {
-		t.Errorf("short cue split: %+v", got)
-	}
-	if got := splitLong(0, 1, strings.Repeat("x", 200)); len(got) != 1 {
-		t.Errorf("text without spaces split: %+v", got)
-	}
+	assert.Equal(t, text, strings.Join(texts, " "))
+
+	assert.Len(t, splitLong(0, 1, "short"), 1)
+	assert.Len(t, splitLong(0, 1, strings.Repeat("x", 200)), 1, "text without spaces can't be split")
 }
 
 func TestTurnsFromWords(t *testing.T) {
@@ -122,13 +95,10 @@ func TestTurnsFromWords(t *testing.T) {
 		{Word: "!", Start: 1.8, End: 1.8, Speaker: "s1"},
 		{Word: " ", Start: 2, End: 2, Speaker: "s1"},
 	}
-	want := []Segment{
+	assert.Equal(t, []Segment{
 		{Start: 0, End: 1, Text: "Hello, there", Speaker: "s0"},
 		{Start: 1.5, End: 1.8, Text: "Hi!", Speaker: "s1"},
-	}
-	if got := turnsFromWords(words); !reflect.DeepEqual(got, want) {
-		t.Errorf("turns = %+v, want %+v", got, want)
-	}
+	}, turnsFromWords(words))
 }
 
 func TestGroupDialogue(t *testing.T) {
@@ -169,9 +139,7 @@ func TestGroupDialogue(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := groupDialogue(tc.in); !reflect.DeepEqual(got, tc.want) {
-				t.Errorf("got %+v, want %+v", got, tc.want)
-			}
+			assert.Equal(t, tc.want, groupDialogue(tc.in))
 		})
 	}
 }
@@ -180,19 +148,15 @@ func TestFormatCuesKeepsDialogueAndWrapsLongText(t *testing.T) {
 	dialogue := timedText{0, 2, "- Hi\n- Hello"}
 	long := timedText{2, 6, "This sentence is long enough that it needs two balanced lines."}
 	got := formatCues([]timedText{dialogue, long})
-	if len(got) != 2 || got[0] != dialogue || !strings.Contains(got[1].text, "\n") {
-		t.Errorf("got %+v", got)
-	}
+	require.Len(t, got, 2)
+	assert.Equal(t, dialogue, got[0])
+	assert.Contains(t, got[1].text, "\n")
 }
 
 func TestBuildCuesKeepsCuesOrderedAndLongEnough(t *testing.T) {
-	got := buildCues([]timedText{{0, 2, "A"}, {1, 1.1, "B"}, {1.5, 3, "C"}})
-	want := []Cue{
+	assert.Equal(t, []Cue{
 		{1, "00:00:00,000 --> 00:00:02,000", "A"},
 		{2, "00:00:02,000 --> 00:00:02,300", "B"},
 		{3, "00:00:02,300 --> 00:00:03,000", "C"},
-	}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("got %+v, want %+v", got, want)
-	}
+	}, buildCues([]timedText{{0, 2, "A"}, {1, 1.1, "B"}, {1.5, 3, "C"}}))
 }

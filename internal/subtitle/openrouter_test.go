@@ -3,12 +3,14 @@ package subtitle
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func newTestClient(handler http.HandlerFunc) (*Client, *httptest.Server) {
@@ -21,18 +23,18 @@ func newTestClient(handler http.HandlerFunc) (*Client, *httptest.Server) {
 func TestPostSendsAuthorizedJSON(t *testing.T) {
 	client, server := newTestClient(func(w http.ResponseWriter, r *http.Request) {
 		var payload map[string]string
-		json.NewDecoder(r.Body).Decode(&payload)
-		if r.URL.Path != "/chat/completions" || r.Header.Get("Authorization") != "Bearer test-key" || payload["model"] != "m" {
-			t.Errorf("unexpected request: %s %v %v", r.URL.Path, r.Header, payload)
-		}
+		assert.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
+		assert.Equal(t, "/chat/completions", r.URL.Path)
+		assert.Equal(t, "Bearer test-key", r.Header.Get("Authorization"))
+		assert.Equal(t, "m", payload["model"])
 		w.Write([]byte(`{"ok":true}`))
 	})
 	defer server.Close()
 
 	response, err := client.Post(context.Background(), "/chat/completions", map[string]string{"model": "m"})
-	if err != nil || response.Status != 200 || string(response.Body) != `{"ok":true}` {
-		t.Fatalf("response = %+v, %v", response, err)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, 200, response.Status)
+	assert.Equal(t, `{"ok":true}`, string(response.Body))
 }
 
 func TestPostRetriesTransientStatuses(t *testing.T) {
@@ -47,9 +49,9 @@ func TestPostRetriesTransientStatuses(t *testing.T) {
 	defer server.Close()
 
 	response, err := client.Post(context.Background(), "/x", map[string]string{})
-	if err != nil || string(response.Body) != "done" || calls.Load() != 3 {
-		t.Fatalf("response = %+v, %v after %d calls", response, err, calls.Load())
-	}
+	require.NoError(t, err)
+	assert.Equal(t, "done", string(response.Body))
+	assert.EqualValues(t, 3, calls.Load())
 }
 
 func TestPostReturnsClientErrorsWithoutRetrying(t *testing.T) {
@@ -62,9 +64,10 @@ func TestPostReturnsClientErrorsWithoutRetrying(t *testing.T) {
 	defer server.Close()
 
 	response, err := client.Post(context.Background(), "/x", map[string]string{})
-	if err != nil || response.Status != 400 || string(response.Body) != "bad model" || calls.Load() != 1 {
-		t.Fatalf("response = %+v, %v after %d calls", response, err, calls.Load())
-	}
+	require.NoError(t, err)
+	assert.Equal(t, 400, response.Status)
+	assert.Equal(t, "bad model", string(response.Body))
+	assert.EqualValues(t, 1, calls.Load())
 }
 
 func TestPostGivesUpAfterMaxAttempts(t *testing.T) {
@@ -78,9 +81,9 @@ func TestPostGivesUpAfterMaxAttempts(t *testing.T) {
 
 	_, err := client.Post(context.Background(), "/x", map[string]string{})
 	var apiError *APIError
-	if !errors.As(err, &apiError) || apiError.Status != 429 || calls.Load() != maxAttempts {
-		t.Fatalf("error = %v after %d calls", err, calls.Load())
-	}
+	require.ErrorAs(t, err, &apiError)
+	assert.Equal(t, 429, apiError.Status)
+	assert.EqualValues(t, maxAttempts, calls.Load())
 }
 
 func TestPostStopsWhenCanceled(t *testing.T) {
@@ -92,7 +95,6 @@ func TestPostStopsWhenCanceled(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
-	if _, err := client.Post(ctx, "/x", map[string]string{}); !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("error = %v, want deadline exceeded", err)
-	}
+	_, err := client.Post(ctx, "/x", map[string]string{})
+	assert.ErrorIs(t, err, context.DeadlineExceeded)
 }

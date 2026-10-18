@@ -6,11 +6,13 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"reflect"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // chatRequest is what a translation request carries, extracted from the prompt.
@@ -32,8 +34,7 @@ func decodeChatRequest(t *testing.T, r *http.Request) chatRequest {
 			Content string `json:"content"`
 		} `json:"messages"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || len(body.Messages) != 1 {
-		t.Errorf("bad request: %v", err)
+	if !assert.NoError(t, json.NewDecoder(r.Body).Decode(&body)) || !assert.Len(t, body.Messages, 1) {
 		return chatRequest{}
 	}
 	prompt := body.Messages[0].Content
@@ -47,9 +48,7 @@ func decodeChatRequest(t *testing.T, r *http.Request) chatRequest {
 		} `json:"items"`
 		After []string `json:"context_after"`
 	}
-	if err := json.Unmarshal([]byte(input), &parsed); err != nil {
-		t.Errorf("prompt input is not JSON: %v\n%s", err, input)
-	}
+	assert.NoError(t, json.Unmarshal([]byte(input), &parsed), "the prompt input is JSON: %s", input)
 	return chatRequest{Prompt: prompt, Before: parsed.Before, Items: parsed.Items, After: parsed.After}
 }
 
@@ -109,27 +108,22 @@ func TestTranslateBatchesWithContextAndKeepsTimelines(t *testing.T) {
 
 	cues := testCues(5)
 	got, err := translator.Translate(context.Background(), cues, "Turkish")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(got) != 5 {
-		t.Fatalf("got %d cues", len(got))
-	}
+	require.NoError(t, err)
+	require.Len(t, got, 5)
 	for position, cue := range got {
-		if cue.Index != cues[position].Index || cue.Timeline != cues[position].Timeline || cue.Text != "tr:"+cues[position].Text {
-			t.Errorf("cue %d = %+v", position, cue)
-		}
+		assert.Equal(t, cues[position].Index, cue.Index)
+		assert.Equal(t, cues[position].Timeline, cue.Timeline)
+		assert.Equal(t, "tr:"+cues[position].Text, cue.Text)
 	}
-	if len(seen) != 3 {
-		t.Fatalf("%d requests, want 3", len(seen))
-	}
+
+	require.Len(t, seen, 3, "requests")
 	middle := seen["line 3"]
-	if !reflect.DeepEqual(middle.Before, []string{"line 1", "line 2"}) || !reflect.DeepEqual(middle.After, []string{"line 5"}) || len(middle.Items) != 2 {
-		t.Errorf("middle batch = %+v", middle)
-	}
-	if first := seen["line 1"]; len(first.Before) != 0 || !strings.Contains(first.Prompt, "into Turkish.") {
-		t.Errorf("first batch = %+v", first)
-	}
+	assert.Equal(t, []string{"line 1", "line 2"}, middle.Before)
+	assert.Equal(t, []string{"line 5"}, middle.After)
+	assert.Len(t, middle.Items, 2)
+	first := seen["line 1"]
+	assert.Empty(t, first.Before)
+	assert.Contains(t, first.Prompt, "into Turkish.")
 }
 
 func TestTranslateRetriesAnInvalidReplyWithTheProblem(t *testing.T) {
@@ -144,12 +138,11 @@ func TestTranslateRetriesAnInvalidReplyWithTheProblem(t *testing.T) {
 	})
 
 	got, err := translator.Translate(context.Background(), testCues(2), "German")
-	if err != nil || got[0].Text != "ok:line 1" {
-		t.Fatalf("got %+v, %v", got, err)
-	}
-	if len(prompts) != 2 || strings.Contains(prompts[0], "previous answer") || !strings.Contains(prompts[1], "Your previous answer was invalid: expected 2 translations, got 1") {
-		t.Errorf("prompts = %q", prompts)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, "ok:line 1", got[0].Text)
+	require.Len(t, prompts, 2)
+	assert.NotContains(t, prompts[0], "previous answer")
+	assert.Contains(t, prompts[1], "Your previous answer was invalid: expected 2 translations, got 1")
 }
 
 func TestTranslateGivesUpAfterRepeatedInvalidReplies(t *testing.T) {
@@ -160,9 +153,8 @@ func TestTranslateGivesUpAfterRepeatedInvalidReplies(t *testing.T) {
 	})
 
 	_, err := translator.Translate(context.Background(), testCues(3), "German")
-	if err == nil || !strings.Contains(err.Error(), "batch starting at cue 1") || calls != maxValidationAttempts {
-		t.Fatalf("error = %v after %d calls", err, calls)
-	}
+	assert.ErrorContains(t, err, "batch starting at cue 1")
+	assert.Equal(t, maxValidationAttempts, calls)
 }
 
 func TestTranslateStopsOnClientErrors(t *testing.T) {
@@ -173,9 +165,8 @@ func TestTranslateStopsOnClientErrors(t *testing.T) {
 	})
 
 	_, err := translator.Translate(context.Background(), testCues(2), "German")
-	if err == nil || !strings.Contains(err.Error(), "401") || calls != 1 {
-		t.Fatalf("error = %v after %d calls", err, calls)
-	}
+	assert.ErrorContains(t, err, "401")
+	assert.Equal(t, 1, calls)
 }
 
 func TestTranslateKeepsCharactersUnescaped(t *testing.T) {
@@ -185,12 +176,9 @@ func TestTranslateKeepsCharactersUnescaped(t *testing.T) {
 		w.Write([]byte(translationsFor(request, "")))
 	})
 	cues := []Cue{{Index: 1, Timeline: "00:00:01,000 --> 00:00:02,000", Text: "Tom & Jerry <3 çay"}}
-	if _, err := translator.Translate(context.Background(), cues, "Turkish"); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(prompt, "Tom & Jerry <3 çay") {
-		t.Errorf("prompt escaped the text: %s", prompt)
-	}
+	_, err := translator.Translate(context.Background(), cues, "Turkish")
+	require.NoError(t, err)
+	assert.Contains(t, prompt, "Tom & Jerry <3 çay")
 }
 
 func TestParseTranslations(t *testing.T) {
@@ -213,14 +201,11 @@ func TestParseTranslations(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := parseTranslations(tc.reply, 2)
 			if tc.wantErr != "" {
-				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
-					t.Fatalf("error = %v, want %q", err, tc.wantErr)
-				}
+				assert.ErrorContains(t, err, tc.wantErr)
 				return
 			}
-			if err != nil || !reflect.DeepEqual(got, tc.want) {
-				t.Errorf("got %q, %v, want %q", got, err, tc.want)
-			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, got)
 		})
 	}
 }

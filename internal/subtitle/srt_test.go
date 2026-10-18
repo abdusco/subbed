@@ -1,8 +1,10 @@
 package subtitle
 
 import (
-	"reflect"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestParseSRT(t *testing.T) {
@@ -41,12 +43,12 @@ func TestParseSRT(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := ParseSRT(tc.content)
-			if (err != nil) != tc.wantErr {
-				t.Fatalf("error = %v, wantErr %v", err, tc.wantErr)
+			if tc.wantErr {
+				assert.Error(t, err)
+				return
 			}
-			if !reflect.DeepEqual(got, tc.want) {
-				t.Errorf("cues = %+v, want %+v", got, tc.want)
-			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, got)
 		})
 	}
 }
@@ -57,14 +59,11 @@ func TestRenderSRTRoundTrips(t *testing.T) {
 		{Index: 2, Timeline: "00:00:03,000 --> 00:00:04,500", Text: "- Hi\n- Hey"},
 	}
 	rendered := RenderSRT(cues)
-	want := "1\n00:00:01,000 --> 00:00:02,000\nHello\n\n2\n00:00:03,000 --> 00:00:04,500\n- Hi\n- Hey\n"
-	if rendered != want {
-		t.Fatalf("rendered = %q, want %q", rendered, want)
-	}
+	assert.Equal(t, "1\n00:00:01,000 --> 00:00:02,000\nHello\n\n2\n00:00:03,000 --> 00:00:04,500\n- Hi\n- Hey\n", rendered)
+
 	parsed, err := ParseSRT(rendered)
-	if err != nil || !reflect.DeepEqual(parsed, cues) {
-		t.Fatalf("round trip = %+v, %v", parsed, err)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, cues, parsed)
 }
 
 func TestFormatTimestamp(t *testing.T) {
@@ -75,11 +74,7 @@ func TestFormatTimestamp(t *testing.T) {
 		3661.007: "01:01:01,007",
 		-3:       "00:00:00,000",
 	} {
-		if got := FormatTimestamp(seconds); got != want {
-			t.Errorf("FormatTimestamp(%v) = %q, want %q", seconds, got, want)
-		}
+		assert.Equal(t, want, FormatTimestamp(seconds), "%v seconds", seconds)
 	}
-	if got := Timeline(1, 2.25); got != "00:00:01,000 --> 00:00:02,250" {
-		t.Errorf("Timeline = %q", got)
-	}
+	assert.Equal(t, "00:00:01,000 --> 00:00:02,250", Timeline(1, 2.25))
 }
