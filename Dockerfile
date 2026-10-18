@@ -26,6 +26,9 @@ RUN apk add --no-cache ca-certificates
 # Copy the binary from builder
 COPY --from=builder /app/subbed .
 
+# Listen on all interfaces, or the published port can't reach the app
+ENV HOST=0.0.0.0
+
 # Expose port
 EXPOSE 3000
 
