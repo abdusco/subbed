@@ -34,17 +34,17 @@ Your videos and subtitles are stored in `./data`, so they survive updates and re
 
 ```yaml
 services:
-    subbed:
-        image: ghcr.io/abdusco/subbed:latest
-        ports:
-            - "3000:3000"
-        environment:
-            - HOST=0.0.0.0
-            - DATABASE_PATH=/app/data/subbed.db
-            - ADMIN_CREDENTIALS=admin:change-me
-        volumes:
-            - ./data:/app/data
-        restart: unless-stopped
+  subbed:
+    image: ghcr.io/abdusco/subbed:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - HOST=0.0.0.0
+      - DATABASE_PATH=/app/data/subbed.db
+      - ADMIN_CREDENTIALS=admin:change-me
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
 ```
 
 Run it with `docker compose up -d`.
@@ -58,7 +58,7 @@ To update, pull the new image and recreate the container (`docker pull ghcr.io/a
 ### Add a video and its subtitles
 
 1. Open the admin page and click **Add video**.
-2. Paste the YouTube link (or just the video ID) and give it a title. A thumbnail preview confirms you picked the right video.
+2. Paste the YouTube link (or just the video ID). A thumbnail preview confirms you picked the right video, and the title is filled in from YouTube. Edit it if you like; a title you typed is never overwritten.
 3. On the video's card, click **Add subtitle**.
 4. Choose a `.srt` or `.vtt` file, enter the language code (for example `en` or `tr`), and click **Upload subtitle**.
 
@@ -154,16 +154,16 @@ Returns the video and all of its subtitles (with their full content):
 
 ```json
 {
-    "video": { "id": 1, "original_url": "VIDEO_ID", "title": "Video title" },
-    "subtitles": [
-        {
-            "id": 1,
-            "video_id": 1,
-            "language": "en",
-            "type": "srt",
-            "content": "..."
-        }
-    ]
+  "video": { "id": 1, "original_url": "VIDEO_ID", "title": "Video title" },
+  "subtitles": [
+    {
+      "id": 1,
+      "video_id": 1,
+      "language": "en",
+      "type": "srt",
+      "content": "..."
+    }
+  ]
 }
 ```
 
@@ -172,6 +172,7 @@ Errors are returned as `{ "error": "message" }` with a matching HTTP status.
 Admin (HTTP Basic auth):
 
 - `GET /api/admin/videos`: list videos with their subtitles (without content)
+- `GET /api/admin/oembed?url=...`: look up a video's title through YouTube's oEmbed endpoint, as `{ "title": "...", "author": "..." }`
 - `POST /api/admin/videos`: add a video, JSON body `{ "url": "...", "title": "..." }`
 - `DELETE /api/admin/videos/:id`: delete a video and its subtitles
 - `POST /api/admin/subtitles`: upload a subtitle, multipart form with `video_id`, `language`, `type` (`srt` or `vtt`) and `file`

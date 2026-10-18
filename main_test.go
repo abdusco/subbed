@@ -25,6 +25,11 @@ type testApp struct {
 
 func newTestApp(t *testing.T) *testApp {
 	t.Helper()
+	return newTestAppWith(t, "")
+}
+
+func newTestAppWith(t *testing.T, oembedURL string) *testApp {
+	t.Helper()
 	repo, err := NewRepository(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -41,7 +46,7 @@ func newTestApp(t *testing.T) *testApp {
 	}
 	logs := &bytes.Buffer{}
 	logger := slog.New(slog.NewJSONHandler(logs, nil))
-	e := newServer(serverConfig{repo: repo, assets: assets, creds: testCreds, logger: logger})
+	e := newServer(serverConfig{repo: repo, assets: assets, creds: testCreds, logger: logger, oembedURL: oembedURL})
 	return &testApp{t: t, handler: e, logs: logs}
 }
 
@@ -303,5 +308,78 @@ func TestListenAddress(t *testing.T) {
 	t.Setenv("LISTEN_ADDR", "[::]:9000")
 	if got := listenAddress(); got != "[::]:9000" {
 		t.Fatalf("listen addr: %q", got)
+	}
+}
+
+func TestOEmbedProxy(t *testing.T) {
+	var lastQuery url.Values
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		lastQuery = r.URL.Query()
+		switch lastQuery.Get("url") {
+		case "https://www.youtube.com/watch?v=jNQXAC9IVRw":
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"title":"  Me at the zoo ","author_name":"jawed","type":"video"}`))
+		case "https://www.youtube.com/watch?v=privatevide":
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		case "https://www.youtube.com/watch?v=emptytitle1":
+			w.Write([]byte(`{"title":"  "}`))
+		case "https://www.youtube.com/watch?v=brokenjson1":
+			w.Write([]byte(`not json`))
+		case "https://www.youtube.com/watch?v=outage00001":
+			http.Error(w, "boom", http.StatusInternalServerError)
+		default:
+			http.Error(w, "Bad Request", http.StatusBadRequest)
+		}
+	}))
+	defer upstream.Close()
+	app := newTestAppWith(t, upstream.URL)
+
+	get := func(rawURL string, authed bool) *httptest.ResponseRecorder {
+		return app.do(http.MethodGet, "/api/admin/oembed?url="+url.QueryEscape(rawURL), nil, nil, authed)
+	}
+
+	rec := get("https://youtu.be/jNQXAC9IVRw", true)
+	if rec.Code != 200 {
+		t.Fatalf("status %d body %q", rec.Code, rec.Body.String())
+	}
+	var result oembedResult
+	json.Unmarshal(rec.Body.Bytes(), &result)
+	if result.Title != "Me at the zoo" || result.Author != "jawed" {
+		t.Fatalf("result = %+v", result)
+	}
+	// whatever URL shape came in, upstream only ever sees one canonical watch URL
+	if lastQuery.Get("format") != "json" || lastQuery.Get("url") != "https://www.youtube.com/watch?v=jNQXAC9IVRw" {
+		t.Fatalf("upstream query = %v", lastQuery)
+	}
+
+	for name, tc := range map[string]struct {
+		url    string
+		authed bool
+		status int
+	}{
+		"needs login":           {"https://youtu.be/jNQXAC9IVRw", false, 401},
+		"not a youtube url":     {"https://example.com/watch?v=jNQXAC9IVRw", true, 400},
+		"missing url":           {"", true, 400},
+		"too short id":          {"https://youtu.be/abc", true, 400},
+		"extra query smuggling": {"https://www.youtube.com/watch?v=jNQXAC9IVRw%26evil%3D1", true, 400},
+		"unknown video":         {"https://youtu.be/zzzzzzzzzzz", true, 404},
+		"private video":         {"https://youtu.be/privatevide", true, 404},
+		"empty title":           {"https://youtu.be/emptytitle1", true, 502},
+		"invalid json":          {"https://youtu.be/brokenjson1", true, 502},
+		"youtube outage":        {"https://youtu.be/outage00001", true, 502},
+	} {
+		rec := get(tc.url, tc.authed)
+		if rec.Code != tc.status {
+			t.Errorf("%s: status %d, want %d (%q)", name, rec.Code, tc.status, rec.Body.String())
+			continue
+		}
+		if tc.authed {
+			errorMessage(t, rec)
+		}
+	}
+
+	upstream.Close()
+	if rec := get("https://youtu.be/jNQXAC9IVRw", true); rec.Code != 502 || errorMessage(t, rec) != "Couldn't reach YouTube" {
+		t.Errorf("upstream down: status %d body %q", rec.Code, rec.Body.String())
 	}
 }

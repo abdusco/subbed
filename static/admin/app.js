@@ -110,7 +110,10 @@ document.addEventListener("alpine:init", () => {
         pageDragging: false,
         dragDepth: 0,
 
-        videoForm: { url: "", title: "", busy: false },
+        /** titleEdited: the user typed a title, so a fetched one must not overwrite it */
+        videoForm: { url: "", title: "", titleEdited: false, titleLoading: false, busy: false },
+        /** counts title lookups so a slow, outdated answer is ignored */
+        titleRequest: 0,
         subtitleForm: {
             videoId: "",
             /** true when the dialog was opened from a video card, so the video can't be changed */
@@ -133,6 +136,7 @@ document.addEventListener("alpine:init", () => {
             matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => applyTheme(this.themePreference));
             matchMedia("(display-mode: standalone)").addEventListener("change", (event) => (this.installed = event.matches));
             this.$watch("lang", (language) => (document.documentElement.lang = language));
+            this.$watch("videoUrlId", (id) => this.suggestTitle(id));
             document.documentElement.lang = this.lang;
 
             window.addEventListener("online", () => {
@@ -159,6 +163,7 @@ document.addEventListener("alpine:init", () => {
                 this.installed = true;
             });
 
+            this.$refs.toasts.showPopover?.();
             this.registerServiceWorker();
             this.loadVideos();
         },
@@ -324,6 +329,9 @@ document.addEventListener("alpine:init", () => {
         toast(kind, text) {
             const id = ++this.toastSequence;
             this.toasts.push({ id, kind, text });
+            // top-layer elements stack in the order they were opened; reopen so toasts sit above any open dialog
+            this.$refs.toasts.hidePopover?.();
+            this.$refs.toasts.showPopover?.();
             setTimeout(() => this.dismissToast(id), TOAST_DURATION_MS[kind]);
         },
 
@@ -346,6 +354,38 @@ document.addEventListener("alpine:init", () => {
             return this.videoUrlId ? thumbnailUrl(this.videoUrlId) : null;
         },
 
+        /**
+         * Fill in the title from YouTube (via our oEmbed proxy) for the video in the URL field.
+         * Failures are silent: the user can always type a title.
+         * @param {string | null} id the video id, or null when the URL is empty or invalid
+         */
+        async suggestTitle(id) {
+            const request = ++this.titleRequest;
+            if (this.videoForm.titleEdited) return;
+            if (!id) {
+                // the URL was cleared or broken: drop a title we filled in ourselves
+                this.videoForm.title = "";
+                this.videoForm.titleLoading = false;
+                return;
+            }
+            this.videoForm.titleLoading = true;
+            try {
+                const watchUrl = encodeURIComponent(`https://www.youtube.com/watch?v=${id}`);
+                const { title } = await this.api(`/api/admin/oembed?url=${watchUrl}`);
+                if (request === this.titleRequest && !this.videoForm.titleEdited) this.videoForm.title = title;
+            } catch {
+                // keep whatever the field holds
+            } finally {
+                if (request === this.titleRequest) this.videoForm.titleLoading = false;
+            }
+        },
+
+        /** @param {Event} event */
+        onTitleInput(event) {
+            // clearing the field hands control back to the automatic title
+            this.videoForm.titleEdited = /** @type {HTMLInputElement} */ (event.target).value.trim() !== "";
+        },
+
         openAddVideo() {
             this.$refs.addDialog.showModal();
         },
@@ -362,6 +402,7 @@ document.addEventListener("alpine:init", () => {
                 });
                 this.videoForm.url = "";
                 this.videoForm.title = "";
+                this.videoForm.titleEdited = false;
                 this.$refs.addDialog.close();
                 this.toast("success", this.t("video.added"));
                 await this.loadVideos();

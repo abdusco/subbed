@@ -768,6 +768,14 @@ dialog[open] {
 /* ---------- toasts and page drop overlay ---------- */
 
 .toasts {
+    /* a manual popover lives in the top layer, so toasts stay readable above open dialogs */
+    inset: auto;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    overflow: visible;
+    color: inherit;
     position: fixed;
     z-index: 60;
     left: 50%;

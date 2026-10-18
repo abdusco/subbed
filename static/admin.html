@@ -297,7 +297,14 @@
                 <img class="preview" x-show="videoPreview" :src="videoPreview" alt="" @error="$el.removeAttribute('src')" />
                 <label class="field">
                     <span x-text="t('video.name')"></span>
-                    <input type="text" x-model="videoForm.title" :placeholder="t('video.namePlaceholder')" required autocomplete="off" />
+                    <input
+                        type="text"
+                        x-model="videoForm.title"
+                        :placeholder="videoForm.titleLoading ? t('video.titleFetching') : t('video.namePlaceholder')"
+                        @input="onTitleInput($event)"
+                        required
+                        autocomplete="off"
+                    />
                 </label>
                 <div class="dialog-foot">
                     <button class="btn btn-ghost" type="button" @click="$refs.addDialog.close()" x-text="t('common.cancel')"></button>
@@ -438,7 +445,7 @@
             <span x-text="t('subtitle.dropNow')"></span>
         </div>
 
-        <div class="toasts" role="status" aria-live="polite">
+        <div class="toasts" x-ref="toasts" popover="manual" role="status" aria-live="polite">
             <template x-for="toast in toasts" :key="toast.id">
                 <div class="toast" :class="`toast-${toast.kind}`">
                     <svg class="icon"><use :href="toast.kind === 'error' ? '#i-alert' : '#i-check'" /></svg>
