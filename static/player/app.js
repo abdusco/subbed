@@ -145,6 +145,7 @@ document.addEventListener("alpine:init", () => {
             window.addEventListener("popstate", () => this.route());
             window.addEventListener("paste", (event) => this.onPaste(event));
             window.addEventListener("pagehide", () => this.stopSync());
+            window.addEventListener("keydown", (event) => this.onKeydown(event));
 
             this.route();
         },
@@ -325,6 +326,7 @@ document.addEventListener("alpine:init", () => {
                     },
                     events: {
                         onReady: () => {
+                            if (this.canFullscreen) blockIframeFullscreen();
                             hideYoutubeCaptions();
                             resolve();
                         },
@@ -418,12 +420,33 @@ document.addEventListener("alpine:init", () => {
             return `${this.delay > 0 ? "+" : ""}${this.delay.toFixed(1)} s`;
         },
 
+        /** @param {KeyboardEvent} event */
+        onKeydown(event) {
+            if (event.key.toLowerCase() !== "f" || event.ctrlKey || event.metaKey || event.altKey) return;
+            if (!this.canFullscreen || !player || event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement)
+                return;
+            event.preventDefault();
+            this.toggleFullscreen();
+        },
+
         toggleFullscreen() {
             if (document.fullscreenElement) document.exitFullscreen();
             else this.$refs.stage.requestFullscreen?.();
         },
     }));
 });
+
+/** Stop the YouTube iframe from going fullscreen on its own (its "f" key), which would hide our subtitles. */
+function blockIframeFullscreen() {
+    const iframe = player?.getIframe?.();
+    if (!iframe) return;
+    iframe.removeAttribute("allowfullscreen");
+    iframe.allow = iframe.allow
+        .split(";")
+        .map((feature) => feature.trim())
+        .filter((feature) => feature && feature !== "fullscreen")
+        .join("; ");
+}
 
 class HttpError extends Error {
     /** @param {number} status */
