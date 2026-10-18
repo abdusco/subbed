@@ -223,7 +223,10 @@ func (y *YtDlp) DownloadAudio(ctx context.Context, videoURL, directory, cookiesF
 
 	arguments := []string{
 		"--no-playlist", "--no-progress", "--newline",
-		"--format", "bestaudio/best",
+		// YouTube serves audio-only streams as Opus or AAC inside a WebM or MP4 container. -x keeps the codec and
+		// only gives the file an audio extension (.opus, .m4a); a video that has no audio-only stream is reduced
+		// to its audio.
+		"--format", "bestaudio/best", "--extract-audio",
 		"--output", filepath.Join(directory, "%(id)s.%(ext)s"),
 		"--no-simulate", "--print", "after_move:filepath",
 	}

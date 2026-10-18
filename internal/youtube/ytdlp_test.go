@@ -145,7 +145,7 @@ func TestYtDlpDownloadAudio(t *testing.T) {
 	assert.Equal(t, "/data/jNQXAC9IVRw.webm", path)
 
 	called := readLog(t, log)
-	for _, want := range []string{"--no-playlist", "--format bestaudio/best", "--cookies /tmp/cookies.txt", "-- https://www.youtube.com/watch?v=jNQXAC9IVRw"} {
+	for _, want := range []string{"--no-playlist", "--format bestaudio/best", "--extract-audio", "--cookies /tmp/cookies.txt", "-- https://www.youtube.com/watch?v=jNQXAC9IVRw"} {
 		assert.Contains(t, called, want)
 	}
 	assert.Equal(t, []string{"[youtube] Extracting URL", "WARNING: slow", "partial"}, lines)
