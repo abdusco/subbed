@@ -322,6 +322,8 @@ document.addEventListener("alpine:init", () => {
                         autoplay: 0,
                         rel: 0,
                         playsinline: 1,
+                        // hint English to YouTube; it may keep it from defaulting to a dubbed audio track
+                        hl: "en",
                         origin: location.origin,
                         // our own fullscreen button keeps the subtitles visible; fall back to YouTube's where it can't
                         fs: this.canFullscreen ? 0 : 1,
