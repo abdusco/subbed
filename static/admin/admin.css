@@ -20,6 +20,9 @@
     --radius: 14px;
     --radius-sm: 10px;
     --gutter: clamp(16px, 4vw, 32px);
+    --page-width: 1100px;
+    /* side padding that lines full-width bars up with the centered page content */
+    --page-inset: max(var(--gutter), calc((100% - var(--page-width)) / 2 + var(--gutter)));
     --font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
 }
 
@@ -106,7 +109,7 @@ a {
     display: flex;
     align-items: center;
     gap: 12px;
-    padding: 12px var(--gutter);
+    padding: 12px var(--page-inset);
     padding-top: calc(12px + env(safe-area-inset-top));
     background: color-mix(in srgb, var(--bg) 82%, transparent);
     backdrop-filter: blur(14px);
@@ -207,7 +210,7 @@ a {
 /* ---------- layout ---------- */
 
 main {
-    width: min(100%, 1100px);
+    width: min(100%, var(--page-width));
     margin: 0 auto;
     padding: 24px var(--gutter) calc(48px + env(safe-area-inset-bottom));
 }
@@ -712,7 +715,7 @@ dialog[open] {
     position: fixed;
     inset: auto;
     top: calc(60px + env(safe-area-inset-top));
-    right: var(--gutter);
+    right: var(--page-inset);
     width: min(calc(100vw - 32px), 320px);
     margin: 0;
     padding: 18px;
