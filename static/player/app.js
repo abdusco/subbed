@@ -49,6 +49,7 @@ const storage = {
 
 const SKIP_SECONDS = 10;
 const FRAME_SECONDS = 1 / 30;
+const VOLUME_STEP = 5;
 
 // The YouTube player and timers live outside Alpine so they are never wrapped in reactive proxies.
 /** @type {any} */
@@ -452,6 +453,13 @@ document.addEventListener("alpine:init", () => {
                 case "-":
                     this.bumpSize(-1);
                     break;
+                case "arrowup":
+                case "arrowdown": {
+                    const step = event.key === "ArrowUp" ? VOLUME_STEP : -VOLUME_STEP;
+                    if (step > 0 && player.isMuted()) player.unMute();
+                    player.setVolume(Math.min(100, Math.max(0, player.getVolume() + step)));
+                    break;
+                }
                 case ",":
                 case ".": {
                     // the IFrame API has no frame step: pause and seek by one frame (assumes 30 fps)
