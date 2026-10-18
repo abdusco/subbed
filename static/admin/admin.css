@@ -865,10 +865,6 @@ dialog[open] {
         flex: 1;
     }
 
-    .topbar .player-link span {
-        display: none;
-    }
-
     dialog {
         margin-bottom: 0;
         width: 100%;

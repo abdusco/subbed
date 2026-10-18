@@ -6,7 +6,6 @@ export const LANGUAGES = /** @type {const} */ (["en", "tr"]);
 export const messages = {
     en: {
         "app.admin": "Admin",
-        "nav.player": "Open player",
         "nav.logo": "subbed admin home",
         "library.title": "Library",
         "library.search": "Search videos",
@@ -88,7 +87,6 @@ export const messages = {
     },
     tr: {
         "app.admin": "Yönetim",
-        "nav.player": "Oynatıcıyı aç",
         "nav.logo": "subbed yönetim ana sayfası",
         "library.title": "Kütüphane",
         "library.search": "Video ara",
