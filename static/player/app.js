@@ -443,6 +443,13 @@ document.addEventListener("alpine:init", () => {
                     if (player.getPlayerState() === YT.PlayerState.PLAYING) player.pauseVideo();
                     else player.playVideo();
                     break;
+                case "+":
+                case "=":
+                    this.bumpSize(1);
+                    break;
+                case "-":
+                    this.bumpSize(-1);
+                    break;
                 case ",":
                 case ".": {
                     // the IFrame API has no frame step: pause and seek by one frame (assumes 30 fps)
