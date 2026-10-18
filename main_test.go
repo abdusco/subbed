@@ -43,6 +43,15 @@ func newTestAppWith(t *testing.T, oembedURL string) *testApp {
 
 func newTestAppConfigured(t *testing.T, oembedURL string, ytdlp ytDlpTool) *testApp {
 	t.Helper()
+	return newTestAppFor(t, func(cfg *serverConfig) {
+		cfg.oembed = youtube.NewOEmbedClient(nil, oembedURL)
+		cfg.ytdlp = ytdlp
+	})
+}
+
+// newTestAppFor builds the app with test defaults; configure may change the config (the repository is already set).
+func newTestAppFor(t *testing.T, configure func(cfg *serverConfig)) *testApp {
+	t.Helper()
 	repo, err := NewRepository(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -60,7 +69,9 @@ func newTestAppConfigured(t *testing.T, oembedURL string, ytdlp ytDlpTool) *test
 	}
 	logs := &bytes.Buffer{}
 	logger := slog.New(slog.NewJSONHandler(logs, nil))
-	e := newServer(serverConfig{repo: repo, assets: assets, creds: testCreds, sessionKey: testKey, logger: logger, oembed: youtube.NewOEmbedClient(nil, oembedURL), ytdlp: ytdlp})
+	cfg := serverConfig{repo: repo, assets: assets, creds: testCreds, sessionKey: testKey, logger: logger}
+	configure(&cfg)
+	e := newServer(cfg)
 	return &testApp{t: t, handler: e, logs: logs, repo: repo}
 }
 

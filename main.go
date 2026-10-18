@@ -21,6 +21,7 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 
+	"subbed/internal/subtitle"
 	"subbed/internal/youtube"
 )
 
@@ -142,11 +143,25 @@ func run() error {
 	// the binary lives next to the database, so it is on the persistent volume and can update itself
 	ytdlp := youtube.NewYtDlp(cmp.Or(os.Getenv("YTDLP_PATH"), filepath.Join(filepath.Dir(dbPath), "bin", "yt-dlp")))
 
-	e := newServer(serverConfig{repo: repo, assets: assets, creds: creds, sessionKey: sessionKey, debug: debug, logger: logger, ytdlp: ytdlp})
+	runner := NewJobRunner(repo, aiTools{
+		ytdlp:          ytdlp,
+		apiKey:         os.Getenv("OPENROUTER_API_KEY"),
+		translateModel: cmp.Or(os.Getenv("TRANSLATE_MODEL"), subtitle.DefaultTranslateModel),
+	}, logger)
+
+	e := newServer(serverConfig{repo: repo, assets: assets, creds: creds, sessionKey: sessionKey, debug: debug, logger: logger, ytdlp: ytdlp, jobs: runner})
 
 	addr := listenAddress()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	// stops before the database closes, so a running job never writes to a closed database
+	runnerCtx, stopRunner := context.WithCancel(ctx)
+	runner.Start(runnerCtx)
+	defer func() {
+		stopRunner()
+		runner.Wait()
+	}()
 
 	go func() {
 		// the first download can take a while, so it must not hold up the server
@@ -187,6 +202,8 @@ type serverConfig struct {
 	oembed     *youtube.OEmbedClient
 	// ytdlp is optional; without it the yt-dlp routes are not served
 	ytdlp ytDlpTool
+	// jobs is optional; without it the subtitle generation routes are not served
+	jobs *JobRunner
 }
 
 // newServer builds the HTTP server with all routes and middleware.
@@ -238,6 +255,11 @@ func newServer(cfg serverConfig) *echo.Echo {
 	admin.DELETE("/cookies", deleteCookies(cfg.repo))
 	admin.GET("/settings", getSettings(cfg.repo))
 	admin.PUT("/settings", updateSettings(cfg.repo))
+	if cfg.jobs != nil {
+		admin.POST("/videos/:id/generate", generateSubtitles(cfg.repo, cfg.jobs))
+		admin.GET("/jobs", listJobs(cfg.repo))
+		admin.GET("/jobs/:id/logs", getJobLogs(cfg.repo))
+	}
 	if cfg.ytdlp != nil {
 		admin.GET("/yt-dlp", ytDlpInfo(cfg.ytdlp))
 		admin.POST("/yt-dlp/update", ytDlpUpdate(cfg.ytdlp))

@@ -132,6 +132,41 @@ func (r *Repository) initDB() error {
 		return fmt.Errorf("failed to create cookies table: %w", err)
 	}
 
+	// Subtitle generation jobs and their logs
+	_, err = sqlDB.Exec(`
+		CREATE TABLE IF NOT EXISTS jobs (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			video_id INTEGER NOT NULL,
+			status TEXT NOT NULL,
+			languages TEXT NOT NULL,
+			source_language TEXT NOT NULL DEFAULT '',
+			error TEXT NOT NULL DEFAULT '',
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			FOREIGN KEY (video_id) REFERENCES videos(id) ON DELETE CASCADE
+		)
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to create jobs table: %w", err)
+	}
+	_, err = sqlDB.Exec(`
+		CREATE TABLE IF NOT EXISTS job_logs (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			job_id INTEGER NOT NULL,
+			at INTEGER NOT NULL,
+			level TEXT NOT NULL,
+			message TEXT NOT NULL,
+			FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE
+		)
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to create job_logs table: %w", err)
+	}
+	_, err = sqlDB.Exec(`CREATE INDEX IF NOT EXISTS job_logs_job ON job_logs (job_id, id)`)
+	if err != nil {
+		return fmt.Errorf("failed to create job_logs index: %w", err)
+	}
+
 	// Settings that the admin can change
 	_, err = sqlDB.Exec(`CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)`)
 	if err != nil {
