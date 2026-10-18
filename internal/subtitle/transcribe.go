@@ -36,8 +36,10 @@ type Transcriber struct {
 	ChunkMinutes float64
 	FFmpeg       string
 	FFprobe      string
-	// Logf reports progress; it may be nil
+	// Logf reports what is happening; it may be nil
 	Logf func(format string, args ...any)
+	// Progress is called with how much of the work is done (0 to 1) and what is being done; it may be nil
+	Progress func(fraction float64, stage string)
 }
 
 // Transcript is the result of a transcription.
@@ -59,6 +61,12 @@ func NewTranscriber(client *Client, model string) *Transcriber {
 		ChunkMinutes: 60,
 		FFmpeg:       "ffmpeg",
 		FFprobe:      "ffprobe",
+	}
+}
+
+func (t *Transcriber) progress(fraction float64, stage string) {
+	if t.Progress != nil {
+		t.Progress(fraction, stage)
 	}
 }
 
@@ -134,6 +142,8 @@ func (t *Transcriber) Transcribe(ctx context.Context, path string) (Transcript, 
 	}
 	t.logf("Extracted %d audio chunk(s)", len(chunks))
 
+	// cutting the audio is quick next to transcribing it
+	const extractionShare = 0.05
 	t.diarizeRejected = false
 	language := t.Language
 	var segments []Segment
@@ -148,6 +158,7 @@ func (t *Transcriber) Transcribe(ctx context.Context, path string) (Transcript, 
 			continue
 		}
 		t.logf("Transcribing chunk %d/%d with %s", position+1, len(chunks), t.Model)
+		t.progress(extractionShare+(1-extractionShare)*float64(position)/float64(len(chunks)), fmt.Sprintf("Transcribing chunk %d/%d", position+1, len(chunks)))
 		result, err := t.transcribeChunk(ctx, chunk, duration)
 		if err != nil {
 			return Transcript{}, fmt.Errorf("chunk %d/%d: %w", position+1, len(chunks), err)
@@ -171,6 +182,7 @@ func (t *Transcriber) Transcribe(ctx context.Context, path string) (Transcript, 
 	if len(segments) == 0 {
 		return Transcript{}, errors.New("transcription returned no text")
 	}
+	t.progress(1, "")
 
 	cues := buildCues(formatCues(groupDialogue(segments)))
 	return Transcript{SRT: RenderSRT(cues), Language: language, Cues: len(cues)}, nil

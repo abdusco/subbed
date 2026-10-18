@@ -71,6 +71,31 @@ func TestTranscribeDiarizedChunksAreOffset(t *testing.T) {
 	assert.Equal(t, "verbose_json", first["response_format"])
 }
 
+func TestTranscribeReportsProgressChunkByChunk(t *testing.T) {
+	segments := reply(`{"segments":[{"start":0,"end":2,"text":"Hi"}]}`)
+	transcriber, _ := newTestTranscriber(t, "4", segments, segments, segments, segments)
+	transcriber.Diarize = false
+	type report struct {
+		fraction float64
+		stage    string
+	}
+	var reports []report
+	transcriber.Progress = func(fraction float64, stage string) { reports = append(reports, report{fraction, stage}) }
+
+	_, err := transcriber.Transcribe(context.Background(), "input.mp4")
+	require.NoError(t, err)
+
+	require.Len(t, reports, 5)
+	for position, want := range []string{"Transcribing chunk 1/4", "Transcribing chunk 2/4", "Transcribing chunk 3/4", "Transcribing chunk 4/4", ""} {
+		assert.Equal(t, want, reports[position].stage)
+	}
+	assert.InDelta(t, 0.05, reports[0].fraction, 1e-9, "the first chunk starts after the audio is cut")
+	assert.Equal(t, 1.0, reports[4].fraction)
+	for position := 1; position < len(reports); position++ {
+		assert.Greater(t, reports[position].fraction, reports[position-1].fraction, "progress only moves forward")
+	}
+}
+
 func TestTranscribeUsesDetectedLanguage(t *testing.T) {
 	transcriber, _ := newTestTranscriber(t, "1", reply(`{"language":"de","segments":[{"start":0,"end":2,"text":"Hallo"}]}`))
 	transcriber.Diarize = false

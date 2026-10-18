@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync/atomic"
 
 	"github.com/sourcegraph/conc/pool"
 )
@@ -39,8 +40,11 @@ type Translator struct {
 	BatchSize int
 	// Workers is the number of parallel requests
 	Workers int
-	// Logf reports progress; it may be nil
+	// Logf reports what is happening; it may be nil
 	Logf func(format string, args ...any)
+	// Progress is called with the fraction of the batches that are done, once per finished batch. It is called
+	// from several goroutines at a time and may be nil.
+	Progress func(fraction float64)
 }
 
 // NewTranslator returns a Translator with batches of 20 cues and 8 parallel requests.
@@ -73,12 +77,16 @@ func (t *Translator) Translate(ctx context.Context, cues []Cue, language string)
 	// the first failure cancels the batches still running and is the error that is returned
 	workers := pool.New().WithContext(ctx).WithMaxGoroutines(t.Workers).WithCancelOnError().WithFirstError()
 	translations := make([][]string, len(batches))
+	var finished atomic.Int32
 	for position, batch := range batches {
 		workers.Go(func(ctx context.Context) error {
 			t.logf("Translating cues %d-%d of %d with %s", batch.start+1, batch.end, len(cues), t.Model)
 			texts, err := t.translateBatch(ctx, cues[batch.start:batch.end],
 				cues[max(0, batch.start-contextCues):batch.start], cues[batch.end:min(batch.end+contextCues, len(cues))], language)
 			translations[position] = texts
+			if err == nil && t.Progress != nil {
+				t.Progress(float64(finished.Add(1)) / float64(len(batches)))
+			}
 			return err
 		})
 	}

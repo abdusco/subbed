@@ -315,6 +315,50 @@ main {
     cursor: pointer;
 }
 
+.job > summary {
+    flex-wrap: wrap;
+    padding-block: 10px;
+}
+
+/* a running job's bar and what it is doing, on a row of its own */
+.job-progress {
+    display: flex;
+    flex-basis: 100%;
+    align-items: center;
+    gap: 12px;
+}
+
+.job-progress progress {
+    flex: 1;
+    height: 6px;
+    min-width: 0;
+    border: 0;
+    border-radius: 999px;
+    appearance: none;
+    background: var(--surface-2);
+    overflow: hidden;
+}
+
+.job-progress progress::-webkit-progress-bar {
+    background: var(--surface-2);
+}
+
+.job-progress progress::-webkit-progress-value {
+    border-radius: 999px;
+    background: var(--accent);
+    transition: width 0.4s ease;
+}
+
+.job-progress progress::-moz-progress-bar {
+    border-radius: 999px;
+    background: var(--accent);
+}
+
+.job-progress .hint {
+    flex: none;
+    white-space: nowrap;
+}
+
 .job-title {
     flex: 1;
     min-width: 0;

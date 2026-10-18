@@ -30,6 +30,8 @@ if [ -n "$FAKE_FAIL" ]; then
 	exit 1
 fi
 printf '[youtube] Extracting URL\nWARNING: slow\npartial' >&2
+echo "PROGRESS 100 400 NA"
+echo "PROGRESS 400 400 NA"
 echo "$FAKE_AUDIO"
 `
 
@@ -140,9 +142,12 @@ func TestYtDlpDownloadAudio(t *testing.T) {
 	logf := func(format string, args ...any) {
 		lines = append(lines, strings.TrimSpace(strings.ReplaceAll(format, "%s", args[0].(string))))
 	}
-	path, err := ytdlp.DownloadAudio(context.Background(), "https://www.youtube.com/watch?v=jNQXAC9IVRw", t.TempDir(), "/tmp/cookies.txt", logf)
+	var fractions []float64
+	progress := func(fraction float64) { fractions = append(fractions, fraction) }
+	path, err := ytdlp.DownloadAudio(context.Background(), "https://www.youtube.com/watch?v=jNQXAC9IVRw", t.TempDir(), "/tmp/cookies.txt", progress, logf)
 	require.NoError(t, err)
-	assert.Equal(t, "/data/jNQXAC9IVRw.webm", path)
+	assert.Equal(t, "/data/jNQXAC9IVRw.webm", path, "the path is the last line that isn't progress")
+	assert.Equal(t, []float64{0.25, 1}, fractions)
 
 	called := readLog(t, log)
 	for _, want := range []string{"--no-playlist", "--format bestaudio/best", "--extract-audio", "--cookies /tmp/cookies.txt", "-- https://www.youtube.com/watch?v=jNQXAC9IVRw"} {
@@ -150,16 +155,40 @@ func TestYtDlpDownloadAudio(t *testing.T) {
 	}
 	assert.Equal(t, []string{"[youtube] Extracting URL", "WARNING: slow", "partial"}, lines)
 
-	_, err = ytdlp.DownloadAudio(context.Background(), "https://youtu.be/x", t.TempDir(), "", nil)
+	_, err = ytdlp.DownloadAudio(context.Background(), "https://youtu.be/x", t.TempDir(), "", nil, nil)
 	require.NoError(t, err)
 	calls := strings.Split(strings.TrimSpace(readLog(t, log)), "\n")
 	assert.NotContains(t, calls[len(calls)-1], "--cookies", "cookies are only passed with a file")
 }
 
+func TestParseProgress(t *testing.T) {
+	for _, tc := range []struct {
+		line string
+		want float64
+		ok   bool
+	}{
+		{"PROGRESS 100 400 NA", 0.25, true},
+		{"PROGRESS 400 400 NA", 1, true},
+		{"PROGRESS 50 NA 200", 0.25, true},
+		{"PROGRESS 500 400 NA", 1, true},
+		{"PROGRESS 0 400 NA", 0, true},
+		{"PROGRESS 50 NA NA", 0, false},
+		{"PROGRESS NA 400 NA", 0, false},
+		{"PROGRESS 100 0 NA", 0, false},
+		{"PROGRESS 100 400", 0, false},
+		{"/data/video.opus", 0, false},
+		{"[download] 25.0% of 1MiB", 0, false},
+	} {
+		got, ok := parseProgress(tc.line)
+		assert.Equal(t, tc.ok, ok, tc.line)
+		assert.Equal(t, tc.want, got, tc.line)
+	}
+}
+
 func TestYtDlpDownloadAudioReportsTheError(t *testing.T) {
 	ytdlp, _ := newFakeYtDlp(t)
 	t.Setenv("FAKE_FAIL", "1")
-	_, err := ytdlp.DownloadAudio(context.Background(), "https://youtu.be/x", t.TempDir(), "", nil)
+	_, err := ytdlp.DownloadAudio(context.Background(), "https://youtu.be/x", t.TempDir(), "", nil, nil)
 	assert.ErrorContains(t, err, "Sign in to confirm")
 }
 
@@ -227,7 +256,7 @@ func TestYtDlpPrefersTheOneInPath(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "2026.10.10", version)
 
-	_, err = ytdlp.DownloadAudio(context.Background(), "https://youtu.be/x", t.TempDir(), "", nil)
+	_, err = ytdlp.DownloadAudio(context.Background(), "https://youtu.be/x", t.TempDir(), "", nil, nil)
 	require.NoError(t, err)
 	assert.Contains(t, readLog(t, log), "--js-runtimes node")
 }

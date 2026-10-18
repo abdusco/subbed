@@ -105,6 +105,8 @@ CREATE TABLE IF NOT EXISTS jobs (
 	video_id INTEGER NOT NULL,
 	kind TEXT NOT NULL,
 	status TEXT NOT NULL,
+	progress INTEGER NOT NULL DEFAULT 0,
+	stage TEXT NOT NULL DEFAULT '',
 	languages TEXT NOT NULL,
 	source_language TEXT NOT NULL DEFAULT '',
 	error TEXT NOT NULL DEFAULT '',

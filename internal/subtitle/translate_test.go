@@ -126,6 +126,24 @@ func TestTranslateBatchesWithContextAndKeepsTimelines(t *testing.T) {
 	assert.Contains(t, first.Prompt, "into Turkish.")
 }
 
+func TestTranslateReportsProgressPerBatch(t *testing.T) {
+	translator := newTestTranslator(t, func(request chatRequest, call int, w http.ResponseWriter) {
+		w.Write([]byte(translationsFor(request, "tr:")))
+	})
+	translator.BatchSize = 2
+	var mutex sync.Mutex
+	var fractions []float64
+	translator.Progress = func(fraction float64) {
+		mutex.Lock()
+		defer mutex.Unlock()
+		fractions = append(fractions, fraction)
+	}
+
+	_, err := translator.Translate(context.Background(), testCues(5), "Turkish")
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []float64{1.0 / 3, 2.0 / 3, 1}, fractions, "one report per batch")
+}
+
 func TestTranslateRetriesAnInvalidReplyWithTheProblem(t *testing.T) {
 	var prompts []string
 	translator := newTestTranslator(t, func(request chatRequest, call int, w http.ResponseWriter) {

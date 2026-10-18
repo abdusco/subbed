@@ -37,6 +37,9 @@ type Job struct {
 	Kind string `json:"kind" db:"kind"`
 	// Status is queued, running, done or failed
 	Status string `json:"status" db:"status"`
+	// Progress is how much of the job is done, in percent, and Stage says what it is doing at the moment
+	Progress int    `json:"progress" db:"progress"`
+	Stage    string `json:"stage" db:"stage"`
 	// Languages are the translation targets; a transcribe job has none
 	Languages     []string `json:"languages" db:"-"`
 	LanguagesJSON string   `json:"-" db:"languages"`
@@ -77,6 +80,8 @@ func (r *Repository) jobQuery() *goqu.SelectDataset {
 			goqu.I("videos.title").As("video_title"),
 			goqu.I("jobs.kind").As("kind"),
 			goqu.I("jobs.status").As("status"),
+			goqu.I("jobs.progress").As("progress"),
+			goqu.I("jobs.stage").As("stage"),
 			goqu.I("jobs.languages").As("languages"),
 			goqu.I("jobs.source_language").As("source_language"),
 			goqu.I("jobs.error").As("error"),
@@ -172,9 +177,31 @@ func (r *Repository) ClaimNextJob(ctx context.Context) (*Job, error) {
 	return &job, job.decode()
 }
 
-// FinishJob records how a job ended: done, or failed with an error message.
+// FinishJob records how a job ended: done, or failed with an error message. A finished job is not doing anything;
+// a failed one keeps how far it got.
 func (r *Repository) FinishJob(ctx context.Context, id int64, status, errorMessage string) error {
-	return r.setJobStatus(ctx, id, status, errorMessage)
+	record := goqu.Record{"status": status, "error": errorMessage, "stage": "", "updated_at": time.Now().Unix()}
+	if status == jobDone {
+		record["progress"] = 100
+	}
+	_, err := r.db.Update("jobs").Set(record).Where(goqu.C("id").Eq(id)).Executor().ExecContext(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to finish job: %w", err)
+	}
+	return nil
+}
+
+// SetJobProgress records how far a job is, in percent, and what it is doing.
+func (r *Repository) SetJobProgress(ctx context.Context, id int64, percent int, stage string) error {
+	_, err := r.db.Update("jobs").
+		Set(goqu.Record{"progress": percent, "stage": stage, "updated_at": time.Now().Unix()}).
+		Where(goqu.C("id").Eq(id)).
+		Executor().
+		ExecContext(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to update job progress: %w", err)
+	}
+	return nil
 }
 
 func (r *Repository) setJobStatus(ctx context.Context, id int64, status, errorMessage string) error {

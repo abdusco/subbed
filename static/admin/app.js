@@ -19,7 +19,7 @@ import {
 /**
  * @typedef {{
  *     id: number, video_id: number, video_title: string, kind: "transcribe" | "translate",
- *     status: "queued" | "running" | "done" | "failed",
+ *     status: "queued" | "running" | "done" | "failed", progress: number, stage: string,
  *     languages: string[], source_language: string, error: string, created_at: number
  * }} Job
  */
@@ -842,6 +842,14 @@ document.addEventListener("alpine:init", () => {
         /** @param {JobLogLine} line */
         formatLogTime(line) {
             return new Date(line.at).toLocaleTimeString(this.lang, { hour12: false });
+        },
+
+        /**
+         * @param {Job} job
+         * @returns {string} what a running job is doing and how far it is, e.g. "Transcribing chunk 2/5 · 48%"
+         */
+        jobProgressText(job) {
+            return job.stage ? `${job.stage} · ${job.progress}%` : `${job.progress}%`;
         },
 
         /** @param {Job} job */

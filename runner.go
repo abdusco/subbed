@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"os"
 	"slices"
 	"strings"
@@ -24,13 +25,16 @@ const (
 
 type logFunc = func(format string, args ...any)
 
-// jobTools are the outside services a job uses.
+// progressFunc reports how much of some work is done (0 to 1) and what it is doing. An empty stage keeps the last one.
+type progressFunc = func(fraction float64, stage string)
+
+// jobTools are the outside services a job uses. They report their own progress as a fraction of what they do.
 type jobTools interface {
 	// Ready reports why jobs cannot run, e.g. a missing API key
 	Ready() error
-	DownloadAudio(ctx context.Context, videoURL, directory, cookiesFile string, logf logFunc) (string, error)
-	Transcribe(ctx context.Context, model, path, language string, logf logFunc) (subtitle.Transcript, error)
-	Translate(ctx context.Context, cues []subtitle.Cue, language string, logf logFunc) ([]subtitle.Cue, error)
+	DownloadAudio(ctx context.Context, videoURL, directory, cookiesFile string, progress progressFunc, logf logFunc) (string, error)
+	Transcribe(ctx context.Context, model, path, language string, progress progressFunc, logf logFunc) (subtitle.Transcript, error)
+	Translate(ctx context.Context, cues []subtitle.Cue, language string, progress progressFunc, logf logFunc) ([]subtitle.Cue, error)
 }
 
 // aiTools downloads with yt-dlp and calls OpenRouter models.
@@ -47,21 +51,65 @@ func (t aiTools) Ready() error {
 	return nil
 }
 
-func (t aiTools) DownloadAudio(ctx context.Context, videoURL, directory, cookiesFile string, logf logFunc) (string, error) {
-	return t.ytdlp.DownloadAudio(ctx, videoURL, directory, cookiesFile, logf)
+func (t aiTools) DownloadAudio(ctx context.Context, videoURL, directory, cookiesFile string, progress progressFunc, logf logFunc) (string, error) {
+	return t.ytdlp.DownloadAudio(ctx, videoURL, directory, cookiesFile, func(fraction float64) { progress(fraction, "") }, logf)
 }
 
-func (t aiTools) Transcribe(ctx context.Context, model, path, language string, logf logFunc) (subtitle.Transcript, error) {
+func (t aiTools) Transcribe(ctx context.Context, model, path, language string, progress progressFunc, logf logFunc) (subtitle.Transcript, error) {
 	transcriber := subtitle.NewTranscriber(subtitle.NewClient(t.apiKey, ""), model)
 	transcriber.Language = language
 	transcriber.Logf = logf
+	transcriber.Progress = progress
 	return transcriber.Transcribe(ctx, path)
 }
 
-func (t aiTools) Translate(ctx context.Context, cues []subtitle.Cue, language string, logf logFunc) ([]subtitle.Cue, error) {
+func (t aiTools) Translate(ctx context.Context, cues []subtitle.Cue, language string, progress progressFunc, logf logFunc) ([]subtitle.Cue, error) {
 	translator := subtitle.NewTranslator(subtitle.NewClient(t.apiKey, ""), t.translateModel)
 	translator.Logf = logf
+	translator.Progress = func(fraction float64) { progress(fraction, "") }
 	return translator.Translate(ctx, cues, language)
+}
+
+// jobProgress stores one job's progress. The tools report in fractions of what they do; span places that on the
+// part of the whole job it covers. Only a change of the whole percent or of the stage is written.
+type jobProgress struct {
+	repo   *Repository
+	logger *slog.Logger
+	jobID  int64
+
+	mutex   sync.Mutex
+	percent int
+	stage   string
+}
+
+// set records that the job is fraction (0 to 1) done. An empty stage keeps the current one.
+func (p *jobProgress) set(ctx context.Context, fraction float64, stage string) {
+	percent := int(math.Round(min(max(fraction, 0), 1) * 100))
+	p.mutex.Lock()
+	defer p.mutex.Unlock()
+	// the job never goes backwards, and a stage that reports nothing new leaves the old text
+	percent = max(percent, p.percent)
+	if stage == "" {
+		stage = p.stage
+	}
+	if percent == p.percent && stage == p.stage {
+		return
+	}
+	p.percent, p.stage = percent, stage
+	if err := p.repo.SetJobProgress(ctx, p.jobID, percent, stage); err != nil {
+		p.logger.Warn("Couldn't save job progress", "job", p.jobID, "error", err)
+	}
+}
+
+// span returns a progressFunc for work that covers the part of the job from `from` to `to` (both 0 to 1).
+// While the work gives no stage of its own, the job shows defaultStage.
+func (p *jobProgress) span(ctx context.Context, from, to float64, defaultStage string) progressFunc {
+	return func(fraction float64, stage string) {
+		if stage == "" {
+			stage = defaultStage
+		}
+		p.set(ctx, from+(to-from)*min(max(fraction, 0), 1), stage)
+	}
 }
 
 // JobRunner works through the queued jobs one at a time.
@@ -177,8 +225,13 @@ func (j *JobRunner) transcribe(ctx context.Context, job *Job, log *jobLog) error
 		log.info(ctx, "No cookies stored; downloading as a signed-out visitor")
 	}
 
+	// downloading takes the first third of the job, transcribing the rest
+	const downloadShare = 0.35
+	progress := &jobProgress{repo: j.repo, logger: j.logger, jobID: job.ID}
+	progress.set(ctx, 0, "Downloading audio")
 	log.info(ctx, "Downloading the audio")
-	audio, err := j.tools.DownloadAudio(ctx, "https://www.youtube.com/watch?v="+videoID, directory, cookiesFile, log.writer(ctx, "yt-dlp: "))
+	audio, err := j.tools.DownloadAudio(ctx, "https://www.youtube.com/watch?v="+videoID, directory, cookiesFile,
+		progress.span(ctx, 0, downloadShare, "Downloading audio"), log.writer(ctx, "yt-dlp: "))
 	if err != nil {
 		return err
 	}
@@ -189,7 +242,9 @@ func (j *JobRunner) transcribe(ctx context.Context, job *Job, log *jobLog) error
 		return err
 	}
 	log.info(ctx, "Transcribing with %s", model)
-	transcript, err := j.tools.Transcribe(ctx, model, audio, job.SourceLanguage, log.writer(ctx, ""))
+	progress.set(ctx, downloadShare, "Transcribing")
+	transcript, err := j.tools.Transcribe(ctx, model, audio, job.SourceLanguage,
+		progress.span(ctx, downloadShare, 1, "Transcribing"), log.writer(ctx, ""))
 	if err != nil {
 		return fmt.Errorf("transcription failed: %w", err)
 	}
@@ -221,12 +276,19 @@ func (j *JobRunner) translateExisting(ctx context.Context, job *Job, log *jobLog
 	}
 	log.info(ctx, "Translating the %s subtitle", source.Language)
 
+	// each language takes an equal part of the job
+	progress := &jobProgress{repo: j.repo, logger: j.logger, jobID: job.ID}
+	targets := uniqueLanguages(job.Languages, source.Language)
 	var failed []string
-	for _, target := range uniqueLanguages(job.Languages, source.Language) {
-		if err := j.translate(ctx, job.VideoID, source.Content, target, log); err != nil {
+	for position, target := range targets {
+		part := progress.span(ctx, float64(position)/float64(len(targets)), float64(position+1)/float64(len(targets)),
+			fmt.Sprintf("Translating to %s", languageName(target)))
+		part(0, "")
+		if err := j.translate(ctx, job.VideoID, source.Content, target, part, log); err != nil {
 			log.error(ctx, "Translating to %s failed: %v", target, err)
 			failed = append(failed, target)
 		}
+		part(1, "")
 	}
 	if len(failed) > 0 {
 		return fmt.Errorf("translation failed for: %s", strings.Join(failed, ", "))
@@ -234,13 +296,13 @@ func (j *JobRunner) translateExisting(ctx context.Context, job *Job, log *jobLog
 	return nil
 }
 
-func (j *JobRunner) translate(ctx context.Context, videoID int, srt, target string, log *jobLog) error {
+func (j *JobRunner) translate(ctx context.Context, videoID int, srt, target string, progress progressFunc, log *jobLog) error {
 	cues, err := subtitle.ParseSRT(srt)
 	if err != nil {
 		return err
 	}
 	log.info(ctx, "Translating %d cues to %s", len(cues), languageName(target))
-	translated, err := j.tools.Translate(ctx, cues, languageName(target), log.writer(ctx, ""))
+	translated, err := j.tools.Translate(ctx, cues, languageName(target), progress, log.writer(ctx, ""))
 	if err != nil {
 		return err
 	}

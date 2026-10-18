@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -215,14 +216,39 @@ func (y *YtDlp) RunUpdater(ctx context.Context, logger *slog.Logger) {
 	}
 }
 
+// progressPrefix starts the progress lines that yt-dlp is asked to print, so they can't be mistaken for the file path.
+const progressPrefix = "PROGRESS "
+
+// parseProgress reads a "PROGRESS <downloaded> <total> <estimated total>" line, where the sizes are bytes or "NA".
+// It returns the fraction that is downloaded; ok is false for any other line or when no total is known.
+func parseProgress(line string) (fraction float64, ok bool) {
+	fields := strings.Fields(strings.TrimPrefix(line, progressPrefix))
+	if !strings.HasPrefix(line, progressPrefix) || len(fields) != 3 {
+		return 0, false
+	}
+	downloaded, err := strconv.ParseFloat(fields[0], 64)
+	if err != nil {
+		return 0, false
+	}
+	for _, total := range fields[1:] {
+		if size, err := strconv.ParseFloat(total, 64); err == nil && size > 0 {
+			return min(downloaded/size, 1), true
+		}
+	}
+	return 0, false
+}
+
 // DownloadAudio downloads the best audio of a video into directory and returns the file's path. cookiesFile may be
-// empty. What yt-dlp prints on stderr is passed to logf line by line (logf may be nil).
-func (y *YtDlp) DownloadAudio(ctx context.Context, videoURL, directory, cookiesFile string, logf func(format string, args ...any)) (string, error) {
+// empty. progress is called with the fraction downloaded, and what yt-dlp prints besides that goes to logf line by
+// line (either may be nil).
+func (y *YtDlp) DownloadAudio(ctx context.Context, videoURL, directory, cookiesFile string, progress func(fraction float64), logf func(format string, args ...any)) (string, error) {
 	y.mutex.RLock()
 	defer y.mutex.RUnlock()
 
 	arguments := []string{
-		"--no-playlist", "--no-progress", "--newline",
+		"--no-playlist", "--newline",
+		// --print silences yt-dlp's own progress, so ask for it again in a form that is easy to read
+		"--progress", "--progress-template", "download:" + progressPrefix + "%(progress.downloaded_bytes)s %(progress.total_bytes)s %(progress.total_bytes_estimate)s",
 		// YouTube serves audio-only streams as Opus or AAC inside a WebM or MP4 container. -x keeps the codec and
 		// only gives the file an audio extension (.opus, .m4a); a video that has no audio-only stream is reduced
 		// to its audio.
@@ -239,7 +265,17 @@ func (y *YtDlp) DownloadAudio(ctx context.Context, videoURL, directory, cookiesF
 	}
 	arguments = append(arguments, "--", videoURL)
 
-	var stdout bytes.Buffer
+	// stdout holds the progress lines, and the file's path as the last other line
+	var path string
+	stdout := &lineWriter{emit: func(line string) {
+		if strings.HasPrefix(line, progressPrefix) {
+			if fraction, ok := parseProgress(line); ok && progress != nil {
+				progress(fraction)
+			}
+			return
+		}
+		path = line
+	}}
 	stderr := &lineWriter{emit: func(line string) {
 		if logf != nil {
 			logf("%s", line)
@@ -247,15 +283,13 @@ func (y *YtDlp) DownloadAudio(ctx context.Context, videoURL, directory, cookiesF
 	}}
 	executable, _ := y.binary()
 	command := exec.CommandContext(ctx, executable, arguments...)
-	command.Stdout, command.Stderr = &stdout, stderr
+	command.Stdout, command.Stderr = stdout, stderr
 	err := command.Run()
+	stdout.Flush()
 	stderr.Flush()
 	if err != nil {
 		return "", fmt.Errorf("yt-dlp failed: %w: %s", err, stderr.Last())
 	}
-
-	lines := strings.Split(strings.TrimSpace(stdout.String()), "\n")
-	path := strings.TrimSpace(lines[len(lines)-1])
 	if path == "" {
 		return "", errors.New("yt-dlp did not report the downloaded file")
 	}

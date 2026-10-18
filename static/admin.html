@@ -198,6 +198,10 @@
                             <span class="job-status" :class="`is-${job.status}`" x-text="t(`jobs.status.${job.status}`)"></span>
                             <span class="job-title" x-text="job.video_title"></span>
                             <time class="job-time" :datetime="jobDate(job).toISOString()" x-text="formatJobTime(job)"></time>
+                            <div class="job-progress" x-show="job.status === 'running'">
+                                <progress max="100" :value="job.progress" :aria-label="jobProgressText(job)"></progress>
+                                <span class="hint" x-text="jobProgressText(job)"></span>
+                            </div>
                         </summary>
                         <p class="hint job-detail" x-text="jobSummary(job)"></p>
                         <p class="error-text job-detail" x-show="job.error" x-text="job.error"></p>

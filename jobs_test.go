@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -26,9 +28,9 @@ const testSRT = "1\n00:00:01,000 --> 00:00:02,000\nHello\n\n2\n00:00:03,000 --> 
 // fakeTools stands in for yt-dlp and OpenRouter. Each hook has a working default.
 type fakeTools struct {
 	ready      error
-	download   func(ctx context.Context, videoURL, cookiesFile string, logf logFunc) (string, error)
-	transcribe func(ctx context.Context, model, language string) (subtitle.Transcript, error)
-	translate  func(ctx context.Context, cues []subtitle.Cue, language string) ([]subtitle.Cue, error)
+	download   func(ctx context.Context, videoURL, cookiesFile string, progress progressFunc, logf logFunc) (string, error)
+	transcribe func(ctx context.Context, model, language string, progress progressFunc) (subtitle.Transcript, error)
+	translate  func(ctx context.Context, cues []subtitle.Cue, language string, progress progressFunc) ([]subtitle.Cue, error)
 
 	mutex       sync.Mutex
 	downloads   []string
@@ -41,7 +43,7 @@ type fakeTools struct {
 
 func (f *fakeTools) Ready() error { return f.ready }
 
-func (f *fakeTools) DownloadAudio(ctx context.Context, videoURL, directory, cookiesFile string, logf logFunc) (string, error) {
+func (f *fakeTools) DownloadAudio(ctx context.Context, videoURL, directory, cookiesFile string, progress progressFunc, logf logFunc) (string, error) {
 	f.mutex.Lock()
 	f.downloads = append(f.downloads, videoURL)
 	f.cookiesFile = cookiesFile
@@ -51,31 +53,34 @@ func (f *fakeTools) DownloadAudio(ctx context.Context, videoURL, directory, cook
 	}
 	f.mutex.Unlock()
 	if f.download != nil {
-		return f.download(ctx, videoURL, cookiesFile, logf)
+		return f.download(ctx, videoURL, cookiesFile, progress, logf)
 	}
 	logf("[youtube] Downloading webpage")
-	return directory + "/abc.webm", nil
+	progress(1, "")
+	return directory + "/abc.opus", nil
 }
 
-func (f *fakeTools) Transcribe(ctx context.Context, model, path, language string, logf logFunc) (subtitle.Transcript, error) {
+func (f *fakeTools) Transcribe(ctx context.Context, model, path, language string, progress progressFunc, logf logFunc) (subtitle.Transcript, error) {
 	f.mutex.Lock()
 	f.models = append(f.models, model)
 	f.languages = append(f.languages, language)
 	f.mutex.Unlock()
 	if f.transcribe != nil {
-		return f.transcribe(ctx, model, language)
+		return f.transcribe(ctx, model, language, progress)
 	}
 	logf("Transcribing chunk 1/1")
+	progress(1, "Transcribing chunk 1/1")
 	return subtitle.Transcript{SRT: testSRT, Language: "en", Cues: 2}, nil
 }
 
-func (f *fakeTools) Translate(ctx context.Context, cues []subtitle.Cue, language string, logf logFunc) ([]subtitle.Cue, error) {
+func (f *fakeTools) Translate(ctx context.Context, cues []subtitle.Cue, language string, progress progressFunc, logf logFunc) ([]subtitle.Cue, error) {
 	f.mutex.Lock()
 	f.translated = append(f.translated, language)
 	f.mutex.Unlock()
 	if f.translate != nil {
-		return f.translate(ctx, cues, language)
+		return f.translate(ctx, cues, language, progress)
 	}
+	progress(1, "")
 	return prefixCues(cues, language+": "), nil
 }
 
@@ -196,14 +201,14 @@ func TestTranscribeSavesTheSubtitleInTheDetectedLanguage(t *testing.T) {
 	assert.True(t, os.IsNotExist(err), "the cookie file is removed")
 
 	log := logOf(t, app, job.ID)
-	for _, want := range []string{"info Started: Me at the zoo", "info yt-dlp: [youtube] Downloading webpage", "info Downloaded abc.webm",
+	for _, want := range []string{"info Started: Me at the zoo", "info yt-dlp: [youtube] Downloading webpage", "info Downloaded abc.opus",
 		`The model detected the language "en"`, "Saved the en subtitle (2 cues)", "info Done"} {
 		assert.Contains(t, log, want)
 	}
 }
 
 func TestTranscribeUsesTheConfiguredModelAndSourceLanguage(t *testing.T) {
-	tools := &fakeTools{transcribe: func(ctx context.Context, model, language string) (subtitle.Transcript, error) {
+	tools := &fakeTools{transcribe: func(ctx context.Context, model, language string, progress progressFunc) (subtitle.Transcript, error) {
 		return subtitle.Transcript{SRT: testSRT, Language: "ignored", Cues: 2}, nil
 	}}
 	app, runner := newJobApp(t, tools)
@@ -238,19 +243,19 @@ func TestTranscribeFailures(t *testing.T) {
 		want  string
 	}{
 		"download": {
-			&fakeTools{download: func(context.Context, string, string, logFunc) (string, error) {
+			&fakeTools{download: func(context.Context, string, string, progressFunc, logFunc) (string, error) {
 				return "", errors.New("yt-dlp failed: Sign in to confirm you're not a bot")
 			}},
 			"Sign in to confirm",
 		},
 		"transcription": {
-			&fakeTools{transcribe: func(context.Context, string, string) (subtitle.Transcript, error) {
+			&fakeTools{transcribe: func(context.Context, string, string, progressFunc) (subtitle.Transcript, error) {
 				return subtitle.Transcript{}, errors.New("empty transcription")
 			}},
 			"transcription failed: empty transcription",
 		},
 		"language not detected": {
-			&fakeTools{transcribe: func(context.Context, string, string) (subtitle.Transcript, error) {
+			&fakeTools{transcribe: func(context.Context, string, string, progressFunc) (subtitle.Transcript, error) {
 				return subtitle.Transcript{SRT: testSRT, Language: "English (US)"}, nil
 			}},
 			"couldn't tell the spoken language",
@@ -325,7 +330,7 @@ func TestTranslateAnyExistingLanguageIncludingOneThatWasGenerated(t *testing.T) 
 
 func TestTranslateKeepsGoingWhenOneTranslationFails(t *testing.T) {
 	tools := &fakeTools{}
-	tools.translate = func(ctx context.Context, cues []subtitle.Cue, language string) ([]subtitle.Cue, error) {
+	tools.translate = func(ctx context.Context, cues []subtitle.Cue, language string, progress progressFunc) ([]subtitle.Cue, error) {
 		if language == "German" {
 			return nil, errors.New("model refused")
 		}
@@ -496,6 +501,129 @@ func waitForStatus(t *testing.T, app *testApp, id int64, status string) {
 	}, 5*time.Second, 10*time.Millisecond, "job %d never became %s", id, status)
 }
 
+// progressOf reads a job's stored progress and stage.
+func progressOf(t *testing.T, app *testApp, id int64) (int, string) {
+	t.Helper()
+	job, err := app.repo.GetJob(context.Background(), id)
+	require.NoError(t, err)
+	return job.Progress, job.Stage
+}
+
+func TestJobProgressMapsWorkOntoItsPartOfTheJobAndNeverGoesBack(t *testing.T) {
+	ctx := context.Background()
+	app, _ := newJobApp(t, &fakeTools{})
+	videoID := addTestVideo(t, app)
+	id, err := app.repo.CreateJob(ctx, jobTranscribe, videoID, nil, "")
+	require.NoError(t, err)
+	progress := &jobProgress{repo: app.repo, logger: slog.New(slog.NewTextHandler(io.Discard, nil)), jobID: id}
+
+	half := progress.span(ctx, 0.2, 0.6, "Working")
+	half(0.5, "")
+	percent, stage := progressOf(t, app, id)
+	assert.Equal(t, 40, percent, "half of the span from 20% to 60%")
+	assert.Equal(t, "Working", stage, "the default stage applies")
+
+	half(0.75, "Almost")
+	percent, stage = progressOf(t, app, id)
+	assert.Equal(t, 50, percent)
+	assert.Equal(t, "Almost", stage, "the work's own stage wins")
+
+	progress.set(ctx, 0.3, "")
+	percent, stage = progressOf(t, app, id)
+	assert.Equal(t, 50, percent, "progress never goes back")
+	assert.Equal(t, "Almost", stage, "an empty stage keeps the last one")
+
+	progress.set(ctx, 7, "Too far")
+	percent, _ = progressOf(t, app, id)
+	assert.Equal(t, 100, percent, "progress is capped at 100")
+}
+
+func TestTranscribeJobShowsProgressWhileItRuns(t *testing.T) {
+	var app *testApp
+	var seen [][2]any
+	snapshot := func(t *testing.T, id int64) {
+		percent, stage := progressOf(t, app, id)
+		seen = append(seen, [2]any{percent, stage})
+	}
+	var jobID int64
+	tools := &fakeTools{
+		download: func(ctx context.Context, _, _ string, progress progressFunc, _ logFunc) (string, error) {
+			snapshot(t, jobID)
+			progress(0.4, "")
+			snapshot(t, jobID)
+			progress(1, "")
+			snapshot(t, jobID)
+			return "/tmp/audio.opus", nil
+		},
+		transcribe: func(ctx context.Context, _, _ string, progress progressFunc) (subtitle.Transcript, error) {
+			snapshot(t, jobID)
+			progress(0.2, "Transcribing chunk 1/2")
+			snapshot(t, jobID)
+			return subtitle.Transcript{SRT: testSRT, Language: "en", Cues: 2}, nil
+		},
+	}
+	var runner *JobRunner
+	app, runner = newJobApp(t, tools)
+	videoID := addTestVideo(t, app)
+	job := decodeJob(t, transcribeRequest(app, videoID, map[string]any{}))
+	jobID = job.ID
+	assert.Zero(t, job.Progress)
+	assert.Empty(t, job.Stage)
+
+	runQueued(t, runner)
+
+	assert.Equal(t, [][2]any{
+		{0, "Downloading audio"},
+		{14, "Downloading audio"},      // 40% of the first 35%
+		{35, "Downloading audio"},      // the download is done
+		{35, "Transcribing"},           // the transcription starts
+		{48, "Transcribing chunk 1/2"}, // 20% of the remaining 65%, on top of the 35%
+	}, seen)
+	percent, stage := progressOf(t, app, job.ID)
+	assert.Equal(t, 100, percent, "a finished job is complete")
+	assert.Empty(t, stage, "and not doing anything")
+}
+
+func TestTranslateJobSplitsProgressBetweenLanguages(t *testing.T) {
+	var app *testApp
+	var jobID int64
+	var seen []int
+	tools := &fakeTools{}
+	tools.translate = func(ctx context.Context, cues []subtitle.Cue, language string, progress progressFunc) ([]subtitle.Cue, error) {
+		progress(0.5, "")
+		percent, stage := progressOf(t, app, jobID)
+		seen = append(seen, percent)
+		assert.Equal(t, "Translating to "+language, stage)
+		return prefixCues(cues, language+": "), nil
+	}
+	var runner *JobRunner
+	app, runner = newJobApp(t, tools)
+	videoID := addTestVideo(t, app)
+	storeEnglishSubtitle(t, app, videoID, "en")
+	jobID = decodeJob(t, translateRequest(app, videoID, map[string]any{"source_language": "en", "languages": []string{"tr", "de"}})).ID
+
+	runQueued(t, runner)
+
+	assert.Equal(t, []int{25, 75}, seen, "halfway through the first and the second of two languages")
+}
+
+func TestAFailedJobKeepsHowFarItGot(t *testing.T) {
+	var app *testApp
+	tools := &fakeTools{transcribe: func(context.Context, string, string, progressFunc) (subtitle.Transcript, error) {
+		return subtitle.Transcript{}, errors.New("empty transcription")
+	}}
+	var runner *JobRunner
+	app, runner = newJobApp(t, tools)
+	videoID := addTestVideo(t, app)
+	job := decodeJob(t, transcribeRequest(app, videoID, map[string]any{}))
+
+	runQueued(t, runner)
+
+	percent, stage := progressOf(t, app, job.ID)
+	assert.Equal(t, 35, percent, "the download was done")
+	assert.Empty(t, stage)
+}
+
 func TestInterruptedJobsAreFailedOnStart(t *testing.T) {
 	app, runner := newJobApp(t, &fakeTools{})
 	videoID := addTestVideo(t, app)
@@ -535,7 +663,7 @@ func TestRunnerPicksUpJobsAddedWhileRunning(t *testing.T) {
 
 func TestStoppingTheServerLeavesARunningJobForRecovery(t *testing.T) {
 	started := make(chan struct{})
-	tools := &fakeTools{download: func(ctx context.Context, _, _ string, _ logFunc) (string, error) {
+	tools := &fakeTools{download: func(ctx context.Context, _, _ string, _ progressFunc, _ logFunc) (string, error) {
 		close(started)
 		<-ctx.Done()
 		return "", ctx.Err()
