@@ -58,6 +58,9 @@
                 <symbol id="i-external" viewBox="0 0 24 24">
                     <path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" />
                 </symbol>
+                <symbol id="i-logout" viewBox="0 0 24 24">
+                    <path d="M9 4H5a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h4M16 8l4 4-4 4M20 12H9" />
+                </symbol>
                 <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18" /></symbol>
                 <symbol id="i-check" viewBox="0 0 24 24">
                     <circle cx="12" cy="12" r="9" />
@@ -103,6 +106,15 @@
                 :title="t('settings.title')"
             >
                 <svg class="icon"><use href="#i-sliders" /></svg>
+            </button>
+            <button
+                class="btn btn-ghost btn-icon"
+                type="button"
+                @click="signOut()"
+                :aria-label="t('nav.signOut')"
+                :title="t('nav.signOut')"
+            >
+                <svg class="icon"><use href="#i-logout" /></svg>
             </button>
         </header>
 

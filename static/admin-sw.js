@@ -1,5 +1,5 @@
 // Bump SHELL_VERSION whenever any file listed in SHELL_ASSETS (or the /admin page itself) changes.
-const SHELL_VERSION = "12";
+const SHELL_VERSION = "13";
 const CACHE_PREFIX = "subbed-admin-shell-";
 const CACHE_NAME = `${CACHE_PREFIX}${SHELL_VERSION}`;
 const ENTRY_URL = "/admin";
@@ -35,9 +35,12 @@ self.addEventListener("install", (event) => {
             const cache = await caches.open(CACHE_NAME);
             // the static assets are required; the whole install fails (and retries later) if any is missing
             await Promise.all(SHELL_ASSETS.map(async (url) => cache.put(url, await fetchFresh(url))));
-            // /admin sits behind basic auth: if it can't be fetched now, it is cached on the first authenticated visit
+            // /admin needs a session: signed out it redirects to the login page, which must not be cached as the entry.
+            // If it can't be fetched now, it is cached on the first signed-in visit
             try {
-                await cache.put(ENTRY_URL, await fetchFresh(ENTRY_URL));
+                const entry = await fetchFresh(ENTRY_URL);
+                if (entry.redirected) throw new Error(`${ENTRY_URL} redirected to ${entry.url}`);
+                await cache.put(ENTRY_URL, entry);
             } catch (error) {
                 console.warn("Admin entry page not precached", error);
             }
@@ -85,7 +88,8 @@ async function serveEntry(request) {
     const cached = await cache.match(ENTRY_URL);
     if (cached) return cached;
     const response = await fetch(request);
-    if (response.ok) await cache.put(ENTRY_URL, response.clone());
+    // a redirect means the session is gone and this is the login page
+    if (response.ok && !response.redirected) await cache.put(ENTRY_URL, response.clone());
     return response;
 }
 

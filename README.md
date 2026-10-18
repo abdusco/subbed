@@ -110,6 +110,7 @@ Set these as environment variables.
 | Variable            | Default       | What it does                                                                                               |
 | ------------------- | ------------- | ---------------------------------------------------------------------------------------------------------- |
 | `ADMIN_CREDENTIALS` | _(required)_  | Admin login as `username:password`.                                                                        |
+| `SESSION_SECRET`    | _(random)_    | Key that signs the admin sign-in cookie. If unset, a random key is used and everyone is signed out on restart. |
 | `DATABASE_PATH`     | `./subbed.db` | Where the SQLite database is stored. In Docker, use a path inside your mounted volume.                     |
 | `HOST`              | `127.0.0.1`   | Network interface to listen on. Use `0.0.0.0` in Docker or to allow other devices to connect.              |
 | `PORT`              | `3000`        | Port to listen on.                                                                                         |
@@ -119,7 +120,8 @@ Set these as environment variables.
 ## Keeping it safe
 
 - **Choose a real admin password.** `admin:admin` is only for trying Subbed out.
-- **Use HTTPS if it's reachable from the internet.** The admin login is sent with every request, so put Subbed behind a reverse proxy that provides HTTPS (Caddy, Traefik or nginx). The admin page can only be installed as an app over HTTPS, apart from `localhost`.
+- **Use HTTPS if it's reachable from the internet.** The admin password is sent when you sign in, so put Subbed behind a reverse proxy that provides HTTPS (Caddy, Traefik or nginx). The sign-in cookie is marked `Secure` when the proxy sends `X-Forwarded-Proto: https`.
+- **Set `SESSION_SECRET` for sign-ins that survive restarts.** Use a long random value, for example `openssl rand -hex 32`. Changing it signs everyone out. Failed sign-ins are rate limited per client. The admin page can only be installed as an app over HTTPS, apart from `localhost`.
 - **The player is public.** Anyone who can reach the server can watch any video you added. Adding, changing or deleting videos and subtitles requires the admin login.
 
 ## For developers
@@ -169,7 +171,12 @@ Returns the video and all of its subtitles (with their full content):
 
 Errors are returned as `{ "error": "message" }` with a matching HTTP status.
 
-Admin (HTTP Basic auth):
+Sign in:
+
+- `POST /api/login`: JSON body `{ "username": "...", "password": "..." }`. Answers `204` and sets a `subbed_session` cookie, valid for 30 days.
+- `POST /api/logout`: clears the cookie.
+
+Admin (needs the session cookie; without it the API answers `401`, and `/admin` redirects to `/login`):
 
 - `GET /api/admin/videos`: list videos with their subtitles (without content)
 - `GET /api/admin/oembed?url=...`: look up a video's title through YouTube's oEmbed endpoint, as `{ "title": "...", "author": "..." }`

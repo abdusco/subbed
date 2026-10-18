@@ -266,6 +266,11 @@ document.addEventListener("alpine:init", () => {
             } catch {
                 throw new Error(this.t("error.network"));
             }
+            if (response.status === 401) {
+                // the session expired or was never there
+                location.replace("/login");
+                throw new Error(this.t("error.signedOut"));
+            }
             if (!response.ok) {
                 // the API answers errors as { "error": "message" }
                 const body = await response.json().catch(() => null);
@@ -273,6 +278,11 @@ document.addEventListener("alpine:init", () => {
                 throw new Error(detail || this.t("error.http", { status: response.status }));
             }
             return response.json();
+        },
+
+        async signOut() {
+            await fetch("/api/logout", { method: "POST" }).catch(() => {});
+            location.replace("/login");
         },
 
         loadVideos() {
