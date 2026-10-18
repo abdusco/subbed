@@ -321,6 +321,16 @@
                     </button>
                 </div>
 
+                <template x-if="videoLocked">
+                    <div class="video-context">
+                        <img x-show="thumbnail(selectedVideo)" :src="thumbnail(selectedVideo)" alt="" @error="$el.remove()" />
+                        <div>
+                            <span class="hint" x-text="t('subtitle.forVideo')"></span>
+                            <p class="name" x-text="selectedVideo.title"></p>
+                        </div>
+                    </div>
+                </template>
+
                 <template x-if="!subtitleForm.file">
                     <label
                         class="dropzone"
@@ -352,15 +362,17 @@
                     </div>
                 </template>
 
-                <label class="field">
-                    <span x-text="t('subtitle.video')"></span>
-                    <select x-model="subtitleForm.videoId" required>
-                        <option value="" x-text="t('subtitle.pickVideo')"></option>
-                        <template x-for="video in videos" :key="video.id">
-                            <option :value="String(video.id)" x-text="video.title"></option>
-                        </template>
-                    </select>
-                </label>
+                <template x-if="!videoLocked">
+                    <label class="field">
+                        <span x-text="t('subtitle.video')"></span>
+                        <select x-model="subtitleForm.videoId" required>
+                            <option value="" x-text="t('subtitle.pickVideo')"></option>
+                            <template x-for="video in videos" :key="video.id">
+                                <option :value="String(video.id)" x-text="video.title"></option>
+                            </template>
+                        </select>
+                    </label>
+                </template>
 
                 <label class="field">
                     <span x-text="t('subtitle.language')"></span>

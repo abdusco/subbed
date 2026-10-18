@@ -657,6 +657,29 @@ dialog[open] {
     font-size: 15px;
 }
 
+.video-context {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    background: var(--surface-2);
+}
+
+.video-context img {
+    width: 72px;
+    aspect-ratio: 16 / 9;
+    flex: none;
+    border-radius: 8px;
+    object-fit: cover;
+}
+
+.video-context .name {
+    font-weight: 650;
+    overflow-wrap: anywhere;
+}
+
 .file-row {
     display: flex;
     align-items: center;

@@ -113,6 +113,8 @@ document.addEventListener("alpine:init", () => {
         videoForm: { url: "", title: "", busy: false },
         subtitleForm: {
             videoId: "",
+            /** true when the dialog was opened from a video card, so the video can't be changed */
+            fixedVideo: false,
             language: "",
             /** @type {File | null} */
             file: null,
@@ -376,6 +378,15 @@ document.addEventListener("alpine:init", () => {
             return this.subtitleForm.language.trim() !== "" && !normalizeLanguage(this.subtitleForm.language);
         },
 
+        get selectedVideo() {
+            return this.videos.find((video) => String(video.id) === this.subtitleForm.videoId) ?? null;
+        },
+
+        /** The video is known (opened from a card, or it's the only video), so no picker is needed. */
+        get videoLocked() {
+            return Boolean(this.selectedVideo) && (this.subtitleForm.fixedVideo || this.videos.length === 1);
+        },
+
         get canUpload() {
             return Boolean(
                 this.subtitleForm.file &&
@@ -394,8 +405,12 @@ document.addEventListener("alpine:init", () => {
                 this.toast("error", this.t("subtitle.needVideo"));
                 return;
             }
-            if (videoId !== undefined) this.subtitleForm.videoId = String(videoId);
-            else if (!this.subtitleForm.videoId && this.videos.length === 1) this.subtitleForm.videoId = String(this.videos[0].id);
+            if (!this.$refs.uploadDialog.open) {
+                // a fresh dialog starts from the card's video, or from nothing; a file dropped into an open one keeps its video
+                this.subtitleForm.fixedVideo = videoId !== undefined;
+                this.subtitleForm.videoId = videoId !== undefined ? String(videoId) : "";
+            }
+            if (!this.subtitleForm.videoId && this.videos.length === 1) this.subtitleForm.videoId = String(this.videos[0].id);
             if (file) this.setSubtitleFile(file);
             if (!this.subtitleForm.language) this.subtitleForm.language = storage.get(STORAGE_KEYS.lastSubtitleLanguage) ?? "";
             if (!this.$refs.uploadDialog.open) this.$refs.uploadDialog.showModal();
