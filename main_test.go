@@ -16,6 +16,9 @@ import (
 	"testing/fstest"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"subbed/internal/youtube"
 )
 
@@ -53,9 +56,7 @@ func newTestAppConfigured(t *testing.T, oembedURL string, ytdlp ytDlpTool) *test
 func newTestAppFor(t *testing.T, configure func(cfg *serverConfig)) *testApp {
 	t.Helper()
 	repo, err := NewRepository(filepath.Join(t.TempDir(), "test.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	t.Cleanup(func() { repo.Close() })
 
 	assets := fstest.MapFS{
@@ -110,13 +111,11 @@ func (a *testApp) upload(videoID, language, fileType, filename, content string) 
 // errorMessage decodes an API error body and checks it is the documented {"error": "..."} object.
 func errorMessage(t *testing.T, rec *httptest.ResponseRecorder) string {
 	t.Helper()
-	if got := rec.Header().Get("Content-Type"); !strings.HasPrefix(got, "application/json") {
-		t.Fatalf("error Content-Type = %q, want JSON", got)
-	}
+	require.True(t, strings.HasPrefix(rec.Header().Get("Content-Type"), "application/json"), "error Content-Type")
 	var body map[string]string
-	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || len(body) != 1 || body["error"] == "" {
-		t.Fatalf("error body = %q, want {\"error\": \"...\"}", rec.Body.String())
-	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body), rec.Body.String())
+	require.Len(t, body, 1, `want {"error": "..."}: %s`, rec.Body.String())
+	require.NotEmpty(t, body["error"])
 	return body["error"]
 }
 
@@ -150,21 +149,15 @@ func TestPagesAndStaticFiles(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := app.do(http.MethodGet, tc.target, nil, nil, tc.authed)
-			if rec.Code != tc.status {
-				t.Fatalf("status = %d, want %d (body %q)", rec.Code, tc.status, rec.Body.String())
-			}
-			if tc.body != "" && !strings.Contains(rec.Body.String(), tc.body) {
-				t.Fatalf("body = %q, want it to contain %q", rec.Body.String(), tc.body)
+			require.Equal(t, tc.status, rec.Code, rec.Body.String())
+			if tc.body != "" {
+				assert.Contains(t, rec.Body.String(), tc.body)
 			}
 		})
 	}
 
-	if got := app.do(http.MethodGet, "/", nil, nil, false).Header().Get("Cache-Control"); got != "no-cache" {
-		t.Fatalf("Cache-Control on the page = %q, want no-cache", got)
-	}
-	if got := app.do(http.MethodGet, "/admin", nil, nil, false).Header().Get("Location"); got != "/login" {
-		t.Fatalf("redirect Location = %q, want /login", got)
-	}
+	assert.Equal(t, "no-cache", app.do(http.MethodGet, "/", nil, nil, false).Header().Get("Cache-Control"))
+	assert.Equal(t, "/login", app.do(http.MethodGet, "/admin", nil, nil, false).Header().Get("Location"))
 }
 
 func TestLoginAndLogout(t *testing.T) {
@@ -188,31 +181,24 @@ func TestLoginAndLogout(t *testing.T) {
 		"empty":          {"", ""},
 	} {
 		rec := login(credentials[0], credentials[1])
-		if rec.Code != http.StatusUnauthorized || sessionOf(rec) != nil {
-			t.Fatalf("%s: status = %d, cookie = %v, want 401 and no cookie", name, rec.Code, sessionOf(rec))
-		}
+		assert.Equal(t, http.StatusUnauthorized, rec.Code, name)
+		assert.Nil(t, sessionOf(rec), "%s: no cookie", name)
 		errorMessage(t, rec)
 	}
 
 	rec := login("admin", "secret")
 	cookie := sessionOf(rec)
-	if rec.Code != http.StatusNoContent || cookie == nil {
-		t.Fatalf("login status = %d, cookie = %v, want 204 and a session cookie", rec.Code, cookie)
-	}
-	if !cookie.HttpOnly || cookie.SameSite != http.SameSiteLaxMode {
-		t.Fatalf("session cookie should be HttpOnly and SameSite=Lax: %v", cookie)
-	}
-	if cookie.Secure {
-		t.Fatal("session cookie should not be Secure over plain HTTP")
-	}
+	require.Equal(t, http.StatusNoContent, rec.Code)
+	require.NotNil(t, cookie, "a session cookie")
+	assert.True(t, cookie.HttpOnly)
+	assert.Equal(t, http.SameSiteLaxMode, cookie.SameSite)
+	assert.False(t, cookie.Secure, "not Secure over plain HTTP")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/admin/videos", nil)
 	req.AddCookie(cookie)
 	out := httptest.NewRecorder()
 	app.handler.ServeHTTP(out, req)
-	if out.Code != http.StatusOK {
-		t.Fatalf("admin API with the issued cookie = %d, want 200", out.Code)
-	}
+	assert.Equal(t, http.StatusOK, out.Code, "the admin API accepts the issued cookie")
 
 	secure := httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(`{"username":"admin","password":"secret"}`))
 	secure.Header.Set("Content-Type", "application/json")
@@ -221,45 +207,38 @@ func TestLoginAndLogout(t *testing.T) {
 	secure.RemoteAddr = "127.0.0.1:50000"
 	behindProxy := httptest.NewRecorder()
 	app.handler.ServeHTTP(behindProxy, secure)
-	if cookie := sessionOf(behindProxy); cookie == nil || !cookie.Secure {
-		t.Fatalf("cookie behind an https proxy should be Secure: %v", cookie)
-	}
+	require.NotNil(t, sessionOf(behindProxy))
+	assert.True(t, sessionOf(behindProxy).Secure, "Secure behind an https proxy")
 
 	rec = app.do(http.MethodPost, "/api/logout", nil, nil, true)
-	if cleared := sessionOf(rec); rec.Code != http.StatusNoContent || cleared == nil || cleared.Value != "" || !cleared.Expires.Before(time.Now()) {
-		t.Fatalf("logout status = %d, cookie = %v, want 204 and an expired empty cookie", rec.Code, cleared)
-	}
+	cleared := sessionOf(rec)
+	assert.Equal(t, http.StatusNoContent, rec.Code)
+	require.NotNil(t, cleared)
+	assert.Empty(t, cleared.Value)
+	assert.True(t, cleared.Expires.Before(time.Now()), "the cookie is expired")
 }
 
 func TestSessionTokens(t *testing.T) {
 	sessions := newSessions(testCreds, testKey)
 	token, _ := sessions.issue()
-	if !sessions.valid(token) {
-		t.Fatal("a fresh token should be valid")
-	}
+	assert.True(t, sessions.valid(token), "a fresh token is valid")
 
 	expiry, signature, _ := strings.Cut(token, ".")
+	other, _ := newSessions(testCreds, []byte("another-key")).issue()
 	for name, bad := range map[string]string{
 		"empty":        "",
 		"no signature": expiry,
 		"tampered":     expiry + "." + strings.Repeat("0", len(signature)),
 		"later expiry": "99999999999." + signature,
 		"not a number": "x." + sessions.sign("x"),
-		"other key": func() string {
-			other, _ := newSessions(testCreds, []byte("another-key")).issue()
-			return other
-		}(),
+		"other key":    other,
 	} {
-		if sessions.valid(bad) {
-			t.Fatalf("%s token should be rejected", name)
-		}
+		assert.False(t, sessions.valid(bad), "%s token is rejected", name)
 	}
 
 	later := newSessions(testCreds, testKey)
 	later.now = func() time.Time { return time.Now().Add(sessionTTL + time.Minute) }
-	if later.valid(token) {
-		t.Fatal("an expired token should be rejected")
-	}
+	assert.False(t, later.valid(token), "an expired token is rejected")
 }
 
 func TestSessionKeyFromEnvironment(t *testing.T) {
@@ -267,19 +246,16 @@ func TestSessionKeyFromEnvironment(t *testing.T) {
 
 	t.Setenv("TEST_SESSION_SECRET", "from-env")
 	key, err := sessionKeyFromEnvironment("TEST_SESSION_SECRET", logger)
-	if err != nil || string(key) != "from-env" {
-		t.Fatalf("key = %q, err = %v, want the env value", key, err)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, "from-env", string(key))
 
 	t.Setenv("TEST_SESSION_SECRET", "")
 	first, err := sessionKeyFromEnvironment("TEST_SESSION_SECRET", logger)
-	if err != nil || len(first) < 32 {
-		t.Fatalf("random key = %d bytes, err = %v, want at least 32 bytes", len(first), err)
-	}
-	second, _ := sessionKeyFromEnvironment("TEST_SESSION_SECRET", logger)
-	if bytes.Equal(first, second) {
-		t.Fatal("random keys should differ between calls")
-	}
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, len(first), 32, "a random key is at least 32 bytes")
+	second, err := sessionKeyFromEnvironment("TEST_SESSION_SECRET", logger)
+	require.NoError(t, err)
+	assert.NotEqual(t, first, second, "random keys differ between calls")
 }
 
 func TestLoginIsRateLimited(t *testing.T) {
@@ -288,62 +264,43 @@ func TestLoginIsRateLimited(t *testing.T) {
 	for range 15 {
 		last = app.do(http.MethodPost, "/api/login", strings.NewReader(`{"username":"admin","password":"wrong"}`), map[string]string{"Content-Type": "application/json"}, false)
 	}
-	if last.Code != http.StatusTooManyRequests {
-		t.Fatalf("status after 15 failed attempts = %d, want 429", last.Code)
-	}
+	assert.Equal(t, http.StatusTooManyRequests, last.Code, "status after 15 failed attempts")
 	errorMessage(t, last)
 }
 
 func TestVideoAndSubtitleFlow(t *testing.T) {
 	app := newTestApp(t)
 
-	if rec := app.addVideo("nonsense", "x"); rec.Code != 400 {
-		t.Fatalf("invalid URL: status %d", rec.Code)
-	}
-	if rec := app.addVideo("https://www.youtube.com/watch?v=jNQXAC9IVRw", "  "); rec.Code != 400 {
-		t.Fatalf("empty title: status %d", rec.Code)
-	}
-	if rec := app.do(http.MethodPost, "/api/admin/videos", strings.NewReader("{}"), map[string]string{"Content-Type": "application/json"}, false); rec.Code != 401 {
-		t.Fatalf("add without login: status %d", rec.Code)
-	}
+	assert.Equal(t, 400, app.addVideo("nonsense", "x").Code, "invalid URL")
+	assert.Equal(t, 400, app.addVideo("https://www.youtube.com/watch?v=jNQXAC9IVRw", "  ").Code, "empty title")
+	assert.Equal(t, 401, app.do(http.MethodPost, "/api/admin/videos", strings.NewReader("{}"), map[string]string{"Content-Type": "application/json"}, false).Code, "add without login")
 
 	rec := app.addVideo("https://www.youtube.com/watch?v=jNQXAC9IVRw", "Me at the zoo")
-	if rec.Code != 200 {
-		t.Fatalf("add video: status %d body %q", rec.Code, rec.Body.String())
-	}
+	require.Equal(t, 200, rec.Code, rec.Body.String())
 	var added struct{ ID int }
-	json.Unmarshal(rec.Body.Bytes(), &added)
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &added))
 
 	// the same video in another URL shape is a duplicate
-	if rec := app.addVideo("https://youtu.be/jNQXAC9IVRw", "again"); rec.Code != 409 || !strings.Contains(errorMessage(t, rec), "already") {
-		t.Fatalf("duplicate: status %d body %q", rec.Code, rec.Body.String())
-	}
+	rec = app.addVideo("https://youtu.be/jNQXAC9IVRw", "again")
+	assert.Equal(t, 409, rec.Code)
+	assert.Contains(t, errorMessage(t, rec), "already")
 
-	id := string(rune('0' + added.ID))
+	id := strconv.Itoa(added.ID)
 	vtt := "WEBVTT\n\n00:01.000 --> 00:02.500\nHello\n\n00:03.000 --> 00:04.000\nWorld\n"
-	if rec := app.upload(id, "TR", "vtt", "a.vtt", vtt); rec.Code != 200 {
-		t.Fatalf("upload vtt: status %d body %q", rec.Code, rec.Body.String())
-	}
-	if rec := app.upload(id, "en", "srt", "a.srt", "\xef\xbb\xbf1\n00:00:01,000 --> 00:00:02,000\nHi\n"); rec.Code != 200 {
-		t.Fatalf("upload srt: status %d", rec.Code)
-	}
+	require.Equal(t, 200, app.upload(id, "TR", "vtt", "a.vtt", vtt).Code, "upload vtt")
+	require.Equal(t, 200, app.upload(id, "en", "srt", "a.srt", "\xef\xbb\xbf1\n00:00:01,000 --> 00:00:02,000\nHi\n").Code, "upload srt")
 	// uploading a language again replaces it instead of adding a second subtitle (the list check below expects two)
-	if rec := app.upload(id, "en", "srt", "a.srt", "\xef\xbb\xbf1\n00:00:01,000 --> 00:00:02,000\nHi\n"); rec.Code != 200 {
-		t.Fatalf("re-upload srt: status %d", rec.Code)
-	}
-	for name, rec := range map[string]*httptest.ResponseRecorder{
-		"bad language":  app.upload(id, "", "srt", "a.srt", "x"),
-		"bad type":      app.upload(id, "en", "txt", "a.txt", "x"),
-		"bad video id":  app.upload("abc", "en", "srt", "a.srt", "x"),
-		"unknown video": app.upload("999", "en", "srt", "a.srt", "x"),
+	require.Equal(t, 200, app.upload(id, "en", "srt", "a.srt", "\xef\xbb\xbf1\n00:00:01,000 --> 00:00:02,000\nHi\n").Code, "re-upload srt")
+	for name, tc := range map[string]struct {
+		rec  *httptest.ResponseRecorder
+		want int
+	}{
+		"bad language":  {app.upload(id, "", "srt", "a.srt", "x"), 400},
+		"bad type":      {app.upload(id, "en", "txt", "a.txt", "x"), 400},
+		"bad video id":  {app.upload("abc", "en", "srt", "a.srt", "x"), 400},
+		"unknown video": {app.upload("999", "en", "srt", "a.srt", "x"), 404},
 	} {
-		want := 400
-		if name == "unknown video" {
-			want = 404
-		}
-		if rec.Code != want {
-			t.Errorf("%s: status %d, want %d (%q)", name, rec.Code, want, rec.Body.String())
-		}
+		assert.Equal(t, tc.want, tc.rec.Code, "%s: %s", name, tc.rec.Body.String())
 	}
 
 	// admin list has subtitles without content
@@ -352,12 +309,11 @@ func TestVideoAndSubtitleFlow(t *testing.T) {
 		Title     string
 		Subtitles []Subtitle
 	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &list); err != nil || len(list) != 1 || len(list[0].Subtitles) != 2 {
-		t.Fatalf("list: %v %q", err, rec.Body.String())
-	}
-	if list[0].Subtitles[0].Language != "tr" || list[0].Subtitles[0].Content != "" {
-		t.Fatalf("list subtitle: %+v", list[0].Subtitles[0])
-	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &list), rec.Body.String())
+	require.Len(t, list, 1)
+	require.Len(t, list[0].Subtitles, 2)
+	assert.Equal(t, "tr", list[0].Subtitles[0].Language)
+	assert.Empty(t, list[0].Subtitles[0].Content)
 
 	// the public API returns content, converted to SRT, and is addressed by any URL shape
 	for _, target := range []string{
@@ -365,37 +321,25 @@ func TestVideoAndSubtitleFlow(t *testing.T) {
 		"/api/video?url=" + url.QueryEscape("https://youtu.be/jNQXAC9IVRw"),
 	} {
 		rec = app.do(http.MethodGet, target, nil, nil, false)
+		require.Equal(t, 200, rec.Code, "%s: %s", target, rec.Body.String())
 		var video VideoResponse
-		if err := json.Unmarshal(rec.Body.Bytes(), &video); err != nil || rec.Code != 200 || len(video.Subtitles) != 2 {
-			t.Fatalf("video %s: %d %v %q", target, rec.Code, err, rec.Body.String())
-		}
-		if video.Video.Title != "Me at the zoo" || video.Video.OriginalURL != "jNQXAC9IVRw" {
-			t.Fatalf("video: %+v", video.Video)
-		}
-		if got := video.Subtitles[0].Content; !strings.HasPrefix(got, "1\n00,01,000 --> 00,02,500") && !strings.HasPrefix(got, "1\n00:01,000 --> 00:02,500") {
-			t.Fatalf("converted vtt: %q", got)
-		}
-		if strings.HasPrefix(video.Subtitles[1].Content, "\xef\xbb\xbf") {
-			t.Fatal("BOM was not stripped")
-		}
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &video))
+		require.Len(t, video.Subtitles, 2)
+		assert.Equal(t, "Me at the zoo", video.Video.Title)
+		assert.Equal(t, "jNQXAC9IVRw", video.Video.OriginalURL)
+		got := video.Subtitles[0].Content
+		assert.True(t, strings.HasPrefix(got, "1\n00,01,000 --> 00,02,500") || strings.HasPrefix(got, "1\n00:01,000 --> 00:02,500"), "converted vtt: %q", got)
+		assert.False(t, strings.HasPrefix(video.Subtitles[1].Content, "\xef\xbb\xbf"), "the BOM is stripped")
 	}
-	if rec = app.do(http.MethodGet, "/api/video?url=nope", nil, nil, false); rec.Code != 400 || errorMessage(t, rec) != "Invalid YouTube URL" {
-		t.Fatalf("invalid public url: %d %q", rec.Code, rec.Body.String())
-	}
-	if rec = app.do(http.MethodGet, "/api/video?url="+url.QueryEscape("https://youtu.be/aaaaaaaaaaa"), nil, nil, false); rec.Code != 404 {
-		t.Fatalf("unknown video: %d", rec.Code)
-	}
+	rec = app.do(http.MethodGet, "/api/video?url=nope", nil, nil, false)
+	assert.Equal(t, 400, rec.Code)
+	assert.Equal(t, "Invalid YouTube URL", errorMessage(t, rec))
+	assert.Equal(t, 404, app.do(http.MethodGet, "/api/video?url="+url.QueryEscape("https://youtu.be/aaaaaaaaaaa"), nil, nil, false).Code)
 
 	// deleting a video removes its subtitles
-	if rec = app.do(http.MethodDelete, "/api/admin/videos/"+id, nil, nil, true); rec.Code != 200 {
-		t.Fatalf("delete video: %d", rec.Code)
-	}
-	if rec = app.do(http.MethodGet, "/api/admin/videos", nil, nil, true); strings.TrimSpace(rec.Body.String()) != "[]" {
-		t.Fatalf("list after delete: %q", rec.Body.String())
-	}
-	if rec = app.do(http.MethodDelete, "/api/admin/videos/abc", nil, nil, true); rec.Code != 400 {
-		t.Fatalf("bad id: %d", rec.Code)
-	}
+	require.Equal(t, 200, app.do(http.MethodDelete, "/api/admin/videos/"+id, nil, nil, true).Code)
+	assert.JSONEq(t, "[]", app.do(http.MethodGet, "/api/admin/videos", nil, nil, true).Body.String())
+	assert.Equal(t, 400, app.do(http.MethodDelete, "/api/admin/videos/abc", nil, nil, true).Code)
 }
 
 func TestRequestLogShowsPathAsText(t *testing.T) {
@@ -406,56 +350,45 @@ func TestRequestLogShowsPathAsText(t *testing.T) {
 	var entries []map[string]any
 	for _, line := range strings.Split(strings.TrimSpace(app.logs.String()), "\n") {
 		var entry map[string]any
-		if err := json.Unmarshal([]byte(line), &entry); err != nil {
-			t.Fatalf("log line is not JSON: %q", line)
-		}
+		require.NoError(t, json.Unmarshal([]byte(line), &entry), "log line is JSON: %q", line)
 		entries = append(entries, entry)
 	}
-	if len(entries) != 2 {
-		t.Fatalf("got %d log entries, want 2: %s", len(entries), app.logs.String())
-	}
-	if entries[0]["path"] != "/?v=1" || entries[0]["status"] != float64(200) || entries[0]["level"] != "INFO" {
-		t.Fatalf("first entry: %v", entries[0])
-	}
-	if entries[1]["path"] != "/nope" || entries[1]["status"] != float64(404) || entries[1]["level"] != "WARN" {
-		t.Fatalf("second entry: %v", entries[1])
-	}
+	require.Len(t, entries, 2, app.logs.String())
+	assert.Equal(t, "/?v=1", entries[0]["path"])
+	assert.EqualValues(t, 200, entries[0]["status"])
+	assert.Equal(t, "INFO", entries[0]["level"])
+	assert.Equal(t, "/nope", entries[1]["path"])
+	assert.EqualValues(t, 404, entries[1]["status"])
+	assert.Equal(t, "WARN", entries[1]["level"])
 }
 
 func TestRequestLogSkipsStaticFiles(t *testing.T) {
 	app := newTestApp(t)
 	app.do(http.MethodGet, "/static/app.js", nil, nil, false)
 	app.do(http.MethodGet, "/admin-sw.js", nil, nil, false)
-	if app.logs.Len() != 0 {
-		t.Fatalf("successful static requests were logged: %s", app.logs.String())
-	}
+	assert.Zero(t, app.logs.Len(), "successful static requests are not logged: %s", app.logs.String())
 
 	app.do(http.MethodGet, "/static/missing.js", nil, nil, false)
-	if !strings.Contains(app.logs.String(), "/static/missing.js") {
-		t.Fatalf("a failed static request should be logged: %q", app.logs.String())
-	}
+	assert.Contains(t, app.logs.String(), "/static/missing.js", "a failed static request is logged")
 }
 
 func TestDebugEnabled(t *testing.T) {
 	for value, want := range map[string]bool{"1": true, "true": true, "TRUE": true, "t": true, "0": false, "false": false, "": false, "yes": false, "nonsense": false} {
 		t.Setenv("DEBUG", value)
-		if got := debugEnabled(); got != want {
-			t.Errorf("DEBUG=%q: got %v, want %v", value, got, want)
-		}
+		assert.Equal(t, want, debugEnabled(), "DEBUG=%q", value)
 	}
 }
 
 func TestCredentialsFromEnvironment(t *testing.T) {
 	t.Setenv("ADMIN_CREDENTIALS", "alice:p:ss")
 	creds, err := newCredentialsFromEnvironment("ADMIN_CREDENTIALS")
-	if err != nil || creds.Username != "alice" || creds.Password != "p:ss" {
-		t.Fatalf("got %+v, %v", creds, err)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, Credentials{Username: "alice", Password: "p:ss"}, creds)
+
 	for _, bad := range []string{"", "nopassword", ":x", "x:"} {
 		t.Setenv("ADMIN_CREDENTIALS", bad)
-		if _, err := newCredentialsFromEnvironment("ADMIN_CREDENTIALS"); err == nil {
-			t.Errorf("%q should be rejected", bad)
-		}
+		_, err := newCredentialsFromEnvironment("ADMIN_CREDENTIALS")
+		assert.Error(t, err, "%q should be rejected", bad)
 	}
 }
 
@@ -463,18 +396,12 @@ func TestListenAddress(t *testing.T) {
 	t.Setenv("LISTEN_ADDR", "")
 	t.Setenv("HOST", "")
 	t.Setenv("PORT", "")
-	if got := listenAddress(); got != "127.0.0.1:3000" {
-		t.Fatalf("default: %q", got)
-	}
+	assert.Equal(t, "127.0.0.1:3000", listenAddress(), "default")
 	t.Setenv("HOST", "0.0.0.0")
 	t.Setenv("PORT", "8080")
-	if got := listenAddress(); got != "0.0.0.0:8080" {
-		t.Fatalf("host/port: %q", got)
-	}
+	assert.Equal(t, "0.0.0.0:8080", listenAddress(), "host and port")
 	t.Setenv("LISTEN_ADDR", "[::]:9000")
-	if got := listenAddress(); got != "[::]:9000" {
-		t.Fatalf("listen addr: %q", got)
-	}
+	assert.Equal(t, "[::]:9000", listenAddress(), "listen address")
 }
 
 func TestOEmbedProxy(t *testing.T) {
@@ -505,18 +432,13 @@ func TestOEmbedProxy(t *testing.T) {
 	}
 
 	rec := get("https://youtu.be/jNQXAC9IVRw", true)
-	if rec.Code != 200 {
-		t.Fatalf("status %d body %q", rec.Code, rec.Body.String())
-	}
+	require.Equal(t, 200, rec.Code, rec.Body.String())
 	var result youtube.OEmbedResult
-	json.Unmarshal(rec.Body.Bytes(), &result)
-	if result.Title != "Me at the zoo" || result.Author != "jawed" {
-		t.Fatalf("result = %+v", result)
-	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &result))
+	assert.Equal(t, youtube.OEmbedResult{Title: "Me at the zoo", Author: "jawed"}, result)
 	// whatever URL shape came in, upstream only ever sees one canonical watch URL
-	if lastQuery.Get("format") != "json" || lastQuery.Get("url") != "https://www.youtube.com/watch?v=jNQXAC9IVRw" {
-		t.Fatalf("upstream query = %v", lastQuery)
-	}
+	assert.Equal(t, "json", lastQuery.Get("format"))
+	assert.Equal(t, "https://www.youtube.com/watch?v=jNQXAC9IVRw", lastQuery.Get("url"))
 
 	for name, tc := range map[string]struct {
 		url    string
@@ -535,34 +457,28 @@ func TestOEmbedProxy(t *testing.T) {
 		"youtube outage":        {"https://youtu.be/outage00001", true, 502},
 	} {
 		rec := get(tc.url, tc.authed)
-		if rec.Code != tc.status {
-			t.Errorf("%s: status %d, want %d (%q)", name, rec.Code, tc.status, rec.Body.String())
-			continue
-		}
-		if tc.authed {
+		if assert.Equal(t, tc.status, rec.Code, "%s: %s", name, rec.Body.String()) && tc.authed {
 			errorMessage(t, rec)
 		}
 	}
 
 	upstream.Close()
-	if rec := get("https://youtu.be/jNQXAC9IVRw", true); rec.Code != 502 || errorMessage(t, rec) != "Couldn't reach YouTube" {
-		t.Errorf("upstream down: status %d body %q", rec.Code, rec.Body.String())
-	}
+	rec = get("https://youtu.be/jNQXAC9IVRw", true)
+	assert.Equal(t, 502, rec.Code, "upstream down")
+	assert.Equal(t, "Couldn't reach YouTube", errorMessage(t, rec))
 }
 
 func TestUpdateVideoTitle(t *testing.T) {
 	app := newTestApp(t)
 	rec := app.addVideo("https://www.youtube.com/watch?v=jNQXAC9IVRw", "Old title")
 	var added struct{ ID int }
-	json.Unmarshal(rec.Body.Bytes(), &added)
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &added))
 	target := "/api/admin/videos/" + strconv.Itoa(added.ID)
 	patch := func(target, body string, authed bool) *httptest.ResponseRecorder {
 		return app.do(http.MethodPatch, target, strings.NewReader(body), map[string]string{"Content-Type": "application/json"}, authed)
 	}
 
-	if rec := patch(target, `{"title":"New title"}`, false); rec.Code != 401 {
-		t.Fatalf("without login: status %d", rec.Code)
-	}
+	assert.Equal(t, 401, patch(target, `{"title":"New title"}`, false).Code, "without login")
 	for name, tc := range map[string]struct {
 		target, body string
 		status       int
@@ -575,33 +491,25 @@ func TestUpdateVideoTitle(t *testing.T) {
 		"unknown video": {"/api/admin/videos/999", `{"title":"x"}`, 404},
 	} {
 		rec := patch(tc.target, tc.body, true)
-		if rec.Code != tc.status {
-			t.Errorf("%s: status %d, want %d (%q)", name, rec.Code, tc.status, rec.Body.String())
-			continue
+		if assert.Equal(t, tc.status, rec.Code, "%s: %s", name, rec.Body.String()) {
+			errorMessage(t, rec)
 		}
-		errorMessage(t, rec)
 	}
 
 	rec = patch(target, `{"title":"  Çok güzel video  "}`, true)
-	if rec.Code != 200 {
-		t.Fatalf("update: status %d body %q", rec.Code, rec.Body.String())
-	}
+	require.Equal(t, 200, rec.Code, rec.Body.String())
 	var updated struct {
 		ID    int
 		Title string
 	}
-	json.Unmarshal(rec.Body.Bytes(), &updated)
-	if updated.ID != added.ID || updated.Title != "Çok güzel video" {
-		t.Fatalf("response = %+v", updated)
-	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &updated))
+	assert.Equal(t, added.ID, updated.ID)
+	assert.Equal(t, "Çok güzel video", updated.Title)
 
 	// the new title shows in the admin list and in the public API
 	rec = app.do(http.MethodGet, "/api/admin/videos", nil, nil, true)
-	if !strings.Contains(rec.Body.String(), "Çok güzel video") || strings.Contains(rec.Body.String(), "Old title") {
-		t.Fatalf("admin list: %q", rec.Body.String())
-	}
+	assert.Contains(t, rec.Body.String(), "Çok güzel video")
+	assert.NotContains(t, rec.Body.String(), "Old title")
 	rec = app.do(http.MethodGet, "/api/video?url="+url.QueryEscape("https://youtu.be/jNQXAC9IVRw"), nil, nil, false)
-	if !strings.Contains(rec.Body.String(), "Çok güzel video") {
-		t.Fatalf("public video: %q", rec.Body.String())
-	}
+	assert.Contains(t, rec.Body.String(), "Çok güzel video")
 }

@@ -46,7 +46,7 @@ func TestOEmbedClientFetch(t *testing.T) {
 
 func TestOEmbedClientFetchCanceled(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Error("canceled request reached upstream")
+		assert.Fail(t, "a canceled request reached upstream")
 	}))
 	defer upstream.Close()
 
