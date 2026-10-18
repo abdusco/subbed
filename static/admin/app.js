@@ -715,28 +715,40 @@ document.addEventListener("alpine:init", () => {
          * @param {string} label shown in the confirmation text
          */
         askDelete(kind, item, label) {
+            // a job that is over is only a log entry, so it goes without asking
+            if (kind === "job" && !isJobActive(/** @type {Job} */ (item))) {
+                this.deleteItem(kind, item.id).catch((error) => this.toast("error", error.message));
+                return;
+            }
             this.confirmation = { kind, id: item.id, label, busy: false };
             this.$refs.confirmDialog.showModal();
         },
 
         async confirmDelete() {
-            const { kind, id } = this.confirmation;
             this.confirmation.busy = true;
             try {
-                await this.api(`/api/admin/${DELETE_PATHS[kind]}/${id}`, { method: "DELETE" });
+                await this.deleteItem(this.confirmation.kind, this.confirmation.id);
                 this.$refs.confirmDialog.close();
-                this.toast("success", this.t(`${kind}.deleted`));
-                if (kind === "job") {
-                    delete this.openJobs[id];
-                    delete this.jobLogs[id];
-                    await this.loadJobs();
-                } else {
-                    await this.loadVideos();
-                }
             } catch (error) {
                 this.toast("error", error.message);
             } finally {
                 this.confirmation.busy = false;
+            }
+        },
+
+        /**
+         * @param {"video" | "subtitle" | "job"} kind
+         * @param {number} id
+         */
+        async deleteItem(kind, id) {
+            await this.api(`/api/admin/${DELETE_PATHS[kind]}/${id}`, { method: "DELETE" });
+            this.toast("success", this.t(`${kind}.deleted`));
+            if (kind === "job") {
+                delete this.openJobs[id];
+                delete this.jobLogs[id];
+                await this.loadJobs();
+            } else {
+                await this.loadVideos();
             }
         },
 
