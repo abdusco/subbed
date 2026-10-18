@@ -16,7 +16,7 @@ import (
 const (
 	minChunkDuration = 0.1
 	// DefaultTranscribeModel is used when no model is configured.
-	DefaultTranscribeModel = "elevenlabs/scribe-v2"
+	DefaultTranscribeModel = "openai/whisper-large-v3-turbo"
 )
 
 // Transcriber turns an audio or video file into an SRT with an OpenRouter speech-to-text model.
@@ -25,8 +25,11 @@ type Transcriber struct {
 	Model  string
 	// Language is the ISO-639-1 source language; empty means auto-detect
 	Language string
-	// Diarize labels speakers (needs a supporting model); short speaker changes become "- " dialogue cues
+	// Diarize asks for speaker labels; short speaker changes become "- " dialogue cues. A model that doesn't
+	// support them is used without them.
 	Diarize bool
+	// diarizeRejected is set once a model has refused speaker labels during a Transcribe call
+	diarizeRejected bool
 	// SpeedUp (1.0-2.0) speeds the audio up before transcribing to reduce cost; timestamps are scaled back
 	SpeedUp float64
 	// ChunkMinutes is the audio chunk length in minutes, measured after the speed-up
@@ -131,6 +134,7 @@ func (t *Transcriber) Transcribe(ctx context.Context, path string) (Transcript, 
 	}
 	t.logf("Extracted %d audio chunk(s)", len(chunks))
 
+	t.diarizeRejected = false
 	language := t.Language
 	var segments []Segment
 	offset := 0.0
@@ -155,7 +159,7 @@ func (t *Transcriber) Transcribe(ctx context.Context, path string) (Transcript, 
 			start := segment.Start*t.SpeedUp + offset
 			end := segment.End*t.SpeedUp + offset
 			pieces := []timedText{{start, end, segment.Text}}
-			if t.SpeedUp > 1 || t.Diarize || !result.hasTimestamps {
+			if t.SpeedUp > 1 || t.diarizing() || !result.hasTimestamps {
 				pieces = splitCue(start, end, segment.Text)
 			}
 			for _, piece := range pieces {
@@ -218,43 +222,58 @@ type chunkResult struct {
 	language      string
 }
 
-// transcribeChunk transcribes one audio chunk. If the model rejects verbose_json, the request is repeated as plain
-// JSON and one segment covers the whole chunk (hasTimestamps false). A rejected diarize request is an error.
-// With diarization, speaker turns are built from word labels, falling back to segment labels.
+// diarizing reports whether speaker labels are being asked for: they are wanted, and no model has refused them yet.
+func (t *Transcriber) diarizing() bool {
+	return t.Diarize && !t.diarizeRejected
+}
+
+// chunkRequest is the transcription request for one chunk. A plain request asks for no timestamps, for models that
+// don't return any.
+func (t *Transcriber) chunkRequest(audio []byte, plain bool) map[string]any {
+	payload := map[string]any{
+		"model":       t.Model,
+		"input_audio": map[string]string{"data": base64.StdEncoding.EncodeToString(audio), "format": "mp3"},
+	}
+	if !plain {
+		payload["response_format"] = "verbose_json"
+		payload["timestamp_granularities"] = []string{"segment"}
+	}
+	if t.Language != "" {
+		payload["language"] = t.Language
+	}
+	if t.diarizing() {
+		payload["diarize"] = true
+		if !plain {
+			payload["timestamp_granularities"] = []string{"segment", "word"}
+		}
+	}
+	return payload
+}
+
+// transcribeChunk transcribes one audio chunk. If the model refuses speaker labels, the request is repeated without
+// them, and so are the following chunks. If it then rejects verbose_json, the request is repeated as plain JSON and
+// one segment covers the whole chunk (hasTimestamps false).
+// With speaker labels, turns are built from word labels, falling back to segment labels.
 func (t *Transcriber) transcribeChunk(ctx context.Context, path string, duration float64) (chunkResult, error) {
 	audio, err := os.ReadFile(path)
 	if err != nil {
 		return chunkResult{}, err
 	}
-	granularities := []string{"segment"}
-	if t.Diarize {
-		granularities = []string{"segment", "word"}
-	}
-	payload := map[string]any{
-		"model":                   t.Model,
-		"input_audio":             map[string]string{"data": base64.StdEncoding.EncodeToString(audio), "format": "mp3"},
-		"response_format":         "verbose_json",
-		"timestamp_granularities": granularities,
-	}
-	if t.Language != "" {
-		payload["language"] = t.Language
-	}
-	if t.Diarize {
-		payload["diarize"] = true
-	}
 
-	response, err := t.Client.Post(ctx, "/audio/transcriptions", payload)
+	response, err := t.Client.Post(ctx, "/audio/transcriptions", t.chunkRequest(audio, false))
 	if err != nil {
 		return chunkResult{}, err
 	}
-	if response.Status == 400 && t.Diarize {
-		return chunkResult{}, fmt.Errorf("model rejected diarization: %.300s", response.Body)
+	if response.Status == 400 && t.diarizing() {
+		t.logf("The model doesn't take speaker labels (%.200s); continuing without them", response.Body)
+		t.diarizeRejected = true
+		if response, err = t.Client.Post(ctx, "/audio/transcriptions", t.chunkRequest(audio, false)); err != nil {
+			return chunkResult{}, err
+		}
 	}
 	if response.Status == 400 {
 		t.logf("Model rejected verbose_json (%.200s); using a single cue per chunk", response.Body)
-		delete(payload, "response_format")
-		delete(payload, "timestamp_granularities")
-		if response, err = t.Client.Post(ctx, "/audio/transcriptions", payload); err != nil {
+		if response, err = t.Client.Post(ctx, "/audio/transcriptions", t.chunkRequest(audio, true)); err != nil {
 			return chunkResult{}, err
 		}
 	}
@@ -271,7 +290,7 @@ func (t *Transcriber) transcribeChunk(ctx context.Context, path string, duration
 	}
 
 	result := chunkResult{language: data.Language, hasTimestamps: true}
-	if t.Diarize {
+	if t.diarizing() {
 		if turns := turnsFromWords(data.Words); len(turns) > 0 {
 			result.segments = turns
 			return result, nil
@@ -284,14 +303,14 @@ func (t *Transcriber) transcribeChunk(ctx context.Context, path string, duration
 			continue
 		}
 		label := ""
-		if t.Diarize {
+		if t.diarizing() {
 			label = string(segment.Speaker)
 		}
 		labelled = labelled || label != ""
 		result.segments = append(result.segments, Segment{Start: segment.Start, End: segment.End, Text: text, Speaker: label})
 	}
-	if t.Diarize && !labelled {
-		t.logf("No speaker labels in the response; the model may not support diarization")
+	if t.diarizing() && !labelled {
+		t.logf("No speaker labels in the response; the model may not support them")
 	}
 	if len(result.segments) > 0 {
 		return result, nil

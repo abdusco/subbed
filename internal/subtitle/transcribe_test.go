@@ -3,10 +3,12 @@ package subtitle
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -101,10 +103,57 @@ func TestTranscribeFallsBackWhenTimestampsAreRejected(t *testing.T) {
 	assert.NotContains(t, (*payloads)[1], "response_format", "the retry asks for plain JSON")
 }
 
-func TestTranscribeFailsWhenDiarizationIsRejected(t *testing.T) {
-	transcriber, _ := newTestTranscriber(t, "1", func(w http.ResponseWriter) { http.Error(w, "no diarize", http.StatusBadRequest) })
+func TestTranscribeContinuesWithoutSpeakerLabelsWhenTheModelRefusesThem(t *testing.T) {
+	refused := func(w http.ResponseWriter) {
+		http.Error(w, `{"error":{"message":"The selected model does not support diarize."}}`, http.StatusBadRequest)
+	}
+	segments := reply(`{"language":"en","segments":[{"start":0,"end":2,"text":"Hello there."}]}`)
+	transcriber, payloads := newTestTranscriber(t, "2", refused, segments, segments)
+	var logged []string
+	transcriber.Logf = func(format string, args ...any) { logged = append(logged, fmt.Sprintf(format, args...)) }
+
+	got, err := transcriber.Transcribe(context.Background(), "input.mp4")
+	require.NoError(t, err)
+	assert.Equal(t, "1\n00:00:00,000 --> 00:00:02,000\nHello there.\n\n2\n00:00:10,000 --> 00:00:12,000\nHello there.\n", got.SRT)
+	assert.Equal(t, "en", got.Language)
+
+	require.Len(t, *payloads, 3, "the refused request is repeated once, and the next chunk doesn't ask again")
+	assert.Equal(t, true, (*payloads)[0]["diarize"])
+	assert.NotContains(t, (*payloads)[1], "diarize")
+	assert.Equal(t, []any{"segment"}, (*payloads)[1]["timestamp_granularities"], "no word timestamps without speaker labels")
+	assert.NotContains(t, (*payloads)[2], "diarize")
+	var notices int
+	for _, line := range logged {
+		if strings.Contains(line, "speaker labels") {
+			notices++
+		}
+	}
+	assert.Equal(t, 1, notices, "the refusal is reported once: %q", logged)
+}
+
+func TestTranscribeKeepsSpeakerLabelsWhenTheModelSupportsThem(t *testing.T) {
+	words := reply(`{"language":"en","words":[{"word":"Hi","start":0,"end":1,"speaker":"a"},{"word":"Hello","start":1.2,"end":2,"speaker":"b"}]}`)
+	transcriber, payloads := newTestTranscriber(t, "1", words)
+
+	got, err := transcriber.Transcribe(context.Background(), "input.mp4")
+	require.NoError(t, err)
+	assert.Contains(t, got.SRT, "- Hi\n- Hello")
+	require.Len(t, *payloads, 1)
+	assert.Equal(t, true, (*payloads)[0]["diarize"])
+}
+
+func TestTranscribeRefusedSpeakerLabelsDoNotLeakIntoTheNextTranscription(t *testing.T) {
+	refused := func(w http.ResponseWriter) { http.Error(w, "no diarize", http.StatusBadRequest) }
+	segments := reply(`{"segments":[{"start":0,"end":2,"text":"Hi"}]}`)
+	words := reply(`{"words":[{"word":"Hi","start":0,"end":1,"speaker":"a"}]}`)
+	transcriber, payloads := newTestTranscriber(t, "1", refused, segments, words)
+
 	_, err := transcriber.Transcribe(context.Background(), "input.mp4")
-	assert.ErrorContains(t, err, "diarization")
+	require.NoError(t, err)
+	_, err = transcriber.Transcribe(context.Background(), "input.mp4")
+	require.NoError(t, err)
+	require.Len(t, *payloads, 3)
+	assert.Equal(t, true, (*payloads)[2]["diarize"], "a new transcription asks again")
 }
 
 func TestTranscribeFailsOnEmptyTranscription(t *testing.T) {

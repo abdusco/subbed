@@ -187,7 +187,7 @@ func TestTranscribeSavesTheSubtitleInTheDetectedLanguage(t *testing.T) {
 	assert.Equal(t, map[string]string{"en": testSRT}, subtitleContents(t, app, videoID))
 	assert.Empty(t, tools.translated, "a transcription does not translate")
 	assert.Equal(t, []string{"https://www.youtube.com/watch?v=jNQXAC9IVRw"}, tools.downloads)
-	assert.Equal(t, []string{"elevenlabs/scribe-v2"}, tools.models)
+	assert.Equal(t, []string{"openai/whisper-large-v3-turbo"}, tools.models)
 	assert.Equal(t, []string{""}, tools.languages)
 
 	// yt-dlp got the stored cookies in a temporary file, which is gone afterwards

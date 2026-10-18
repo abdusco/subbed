@@ -213,10 +213,10 @@ func TestSettingsEndpoints(t *testing.T) {
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &settings))
 		return settings
 	}
-	assert.Equal(t, settingsResponse{TranscribeModelDefault: "elevenlabs/scribe-v2"}, read())
+	assert.Equal(t, settingsResponse{TranscribeModelDefault: "openai/whisper-large-v3-turbo"}, read())
 	model, err := app.repo.transcribeModel(context.Background())
 	require.NoError(t, err)
-	assert.Equal(t, "elevenlabs/scribe-v2", model, "the default applies")
+	assert.Equal(t, "openai/whisper-large-v3-turbo", model, "the default applies")
 
 	rec := app.putJSON("/api/admin/settings", map[string]string{"transcribe_model": "  openai/whisper-large-v3  "}, true)
 	assert.Equal(t, 200, rec.Code)

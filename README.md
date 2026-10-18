@@ -77,7 +77,7 @@ Instead of uploading a file, subbed can make the subtitles from the video's audi
 
 1. Set `OPENROUTER_API_KEY` (see [Configuration](#configuration)) and restart.
 2. Open the menu in the top bar and choose **Subtitle generation**. Here you can:
-   - set the **transcription model**, any OpenRouter speech-to-text model (empty uses the default, `elevenlabs/scribe-v2`),
+   - set the **transcription model**, any OpenRouter speech-to-text model (empty uses the default, `openai/whisper-large-v3-turbo`). subbed asks the model to label speakers, so dialogue shows as `- Hi` / `- Hello`; a model that doesn't support that, like Whisper, is used without labels,
    - paste your **YouTube cookies**, which YouTube sometimes asks for before it lets a download through (see below),
    - see the **yt-dlp** version and update it right away.
 3. On a video's card there are two separate actions:
