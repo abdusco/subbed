@@ -47,6 +47,9 @@ const storage = {
     },
 };
 
+const SKIP_SECONDS = 10;
+const FRAME_SECONDS = 1 / 30;
+
 // The YouTube player and timers live outside Alpine so they are never wrapped in reactive proxies.
 /** @type {any} */
 let player = null;
@@ -422,11 +425,37 @@ document.addEventListener("alpine:init", () => {
 
         /** @param {KeyboardEvent} event */
         onKeydown(event) {
-            if (event.key.toLowerCase() !== "f" || event.ctrlKey || event.metaKey || event.altKey) return;
-            if (!this.canFullscreen || !player || event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement)
-                return;
+            if (event.ctrlKey || event.metaKey || event.altKey || !player?.getCurrentTime) return;
+            if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return;
+            switch (event.key.toLowerCase()) {
+                case "f":
+                    if (!this.canFullscreen) return;
+                    this.toggleFullscreen();
+                    break;
+                case "j":
+                    player.seekTo(Math.max(0, player.getCurrentTime() - SKIP_SECONDS), true);
+                    break;
+                case "l":
+                    player.seekTo(player.getCurrentTime() + SKIP_SECONDS, true);
+                    break;
+                case "k":
+                    // @ts-ignore
+                    if (player.getPlayerState() === YT.PlayerState.PLAYING) player.pauseVideo();
+                    else player.playVideo();
+                    break;
+                case ",":
+                case ".": {
+                    // the IFrame API has no frame step: pause and seek by one frame (assumes 30 fps)
+                    player.pauseVideo();
+                    const step = event.key === "," ? -FRAME_SECONDS : FRAME_SECONDS;
+                    player.seekTo(Math.max(0, player.getCurrentTime() + step), true);
+                    break;
+                }
+                default:
+                    return;
+            }
             event.preventDefault();
-            this.toggleFullscreen();
+            this.tick();
         },
 
         toggleFullscreen() {
