@@ -24,6 +24,10 @@
         <svg width="0" height="0" style="position: absolute" aria-hidden="true">
             <defs>
                 <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16" /></symbol>
+                <symbol id="i-user" viewBox="0 0 24 24">
+                    <circle cx="12" cy="8" r="4" />
+                    <path d="M4 21a8 8 0 0 1 16 0" />
+                </symbol>
                 <symbol id="i-sun" viewBox="0 0 24 24">
                     <circle cx="12" cy="12" r="4" />
                     <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />
@@ -94,6 +98,10 @@
                     </button>
                 </div>
             </div>
+            <a class="btn btn-ghost" href="/admin">
+                <svg class="icon"><use href="#i-user" /></svg>
+                <span x-text="t('settings.admin')"></span>
+            </a>
         </div>
 
         <main>
