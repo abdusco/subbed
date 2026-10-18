@@ -1,5 +1,5 @@
 import { resolveLanguage, translate } from "./i18n.js";
-import { cueAt, parseSubtitles, renderCue, urlFromLocation, videoIdFromUrl } from "./subtitles.js";
+import { cuesAt, parseSubtitles, renderCues, urlFromLocation, videoIdFromUrl } from "./subtitles.js";
 
 /** @typedef {import("./subtitles.js").Cue} Cue */
 /** @typedef {{ id: string, language: string, label: string, cues: Cue[] }} Track */
@@ -56,8 +56,8 @@ let player = null;
 let syncTimer = 0;
 /** true while library subtitles are shown instead of YouTube's own captions */
 let suppressYoutubeCaptions = false;
-/** @type {Cue | null} */
-let shownCue = null;
+/** @type {Cue[]} */
+let shownCues = [];
 /** @type {Promise<void> | null} */
 let youtubeApi = null;
 
@@ -352,7 +352,7 @@ document.addEventListener("alpine:init", () => {
             player?.destroy?.();
             player = null;
             suppressYoutubeCaptions = false;
-            shownCue = null;
+            shownCues = [];
             this.cueHtml = "";
             if (this.$refs.mount) this.$refs.mount.innerHTML = "";
         },
@@ -381,15 +381,15 @@ document.addEventListener("alpine:init", () => {
         /** Show the cue for the player's current time, re-rendering only when the cue changes. */
         tick() {
             const track = this.track;
-            const cue = track && player?.getCurrentTime ? cueAt(track.cues, player.getCurrentTime() - this.delay) : null;
-            if (cue === shownCue) return;
-            shownCue = cue;
-            this.cueHtml = cue ? renderCue(cue.lines) : "";
+            const cues = track && player?.getCurrentTime ? cuesAt(track.cues, player.getCurrentTime() - this.delay) : [];
+            if (cues.length === shownCues.length && cues.every((cue, index) => cue === shownCues[index])) return;
+            shownCues = cues;
+            this.cueHtml = renderCues(cues);
         },
 
         onTrackChange() {
             storage.set(STORAGE_KEYS.subtitleLanguage, this.track ? this.track.language : OFF);
-            shownCue = null;
+            shownCues = [];
             this.tick();
         },
 
@@ -409,13 +409,13 @@ document.addEventListener("alpine:init", () => {
         bumpDelay(direction) {
             const next = Math.round((this.delay + direction * DELAY_STEP_SECONDS) * 10) / 10;
             this.delay = Math.min(Math.max(next, -DELAY_LIMIT_SECONDS), DELAY_LIMIT_SECONDS);
-            shownCue = null;
+            shownCues = [];
             this.tick();
         },
 
         resetDelay() {
             this.delay = 0;
-            shownCue = null;
+            shownCues = [];
             this.tick();
         },
 

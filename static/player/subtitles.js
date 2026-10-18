@@ -41,12 +41,12 @@ export function parseSubtitles(content) {
 }
 
 /**
- * Find the cue showing at `time`. Cues must be sorted by start.
+ * Find every cue showing at `time` (several when speakers overlap), in start order. Cues must be sorted by start.
  * @param {Cue[]} cues
  * @param {number} time seconds
- * @returns {Cue | null}
+ * @returns {Cue[]}
  */
-export function cueAt(cues, time) {
+export function cuesAt(cues, time) {
     let low = 0;
     let high = cues.length - 1;
     let candidate = -1;
@@ -60,11 +60,13 @@ export function cueAt(cues, time) {
             high = middle - 1;
         }
     }
-    // overlapping cues are rare; look back a few for one that is still showing
-    for (let index = candidate; index >= 0 && index > candidate - 4; index--) {
-        if (time <= cues[index].end) return cues[index];
+    // overlapping cues are short-lived; look back a few for ones that are still showing
+    /** @type {Cue[]} */
+    const showing = [];
+    for (let index = candidate; index >= 0 && index > candidate - 8; index--) {
+        if (time <= cues[index].end) showing.unshift(cues[index]);
     }
-    return null;
+    return showing;
 }
 
 /**
@@ -74,6 +76,15 @@ export function cueAt(cues, time) {
  */
 export function renderCue(lines) {
     return lines.map(renderLine).join("<br>");
+}
+
+/**
+ * Render the cues showing at once, one below the other.
+ * @param {Cue[]} cues
+ * @returns {string}
+ */
+export function renderCues(cues) {
+    return cues.map((cue) => renderCue(cue.lines)).join("<br>");
 }
 
 /**

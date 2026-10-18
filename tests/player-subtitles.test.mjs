@@ -1,7 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { cueAt, parseSubtitles, parseTimestamp, renderCue, urlFromLocation, videoIdFromUrl } from "../static/player/subtitles.js";
+import {
+    cuesAt,
+    parseSubtitles,
+    parseTimestamp,
+    renderCue,
+    renderCues,
+    urlFromLocation,
+    videoIdFromUrl,
+} from "../static/player/subtitles.js";
 
 test("parseTimestamp accepts SRT, VTT and short forms", () => {
     assert.equal(parseTimestamp("00:01:02,345"), 62.345);
@@ -28,17 +36,23 @@ test("parseSubtitles sorts cues by start time", () => {
     );
 });
 
-test("cueAt finds the showing cue, and none in gaps", () => {
+test("cuesAt finds every showing cue in start order, and none in gaps", () => {
     const cues = parseSubtitles(
         "1\n00:00:01,000 --> 00:00:02,000\na\n\n2\n00:00:04,000 --> 00:00:09,000\nb\n\n3\n00:00:05,000 --> 00:00:06,000\nc\n",
     );
-    assert.equal(cueAt(cues, 0.5), null);
-    assert.equal(cueAt(cues, 1.5)?.lines[0], "a");
-    assert.equal(cueAt(cues, 3), null);
-    assert.equal(cueAt(cues, 5.5)?.lines[0], "c");
-    assert.equal(cueAt(cues, 8)?.lines[0], "b", "a long cue stays visible after a short overlapping one ends");
-    assert.equal(cueAt(cues, 10), null);
-    assert.equal(cueAt([], 1), null);
+    const texts = (/** @type {number} */ time) => cuesAt(cues, time).map((cue) => cue.lines[0]);
+    assert.deepEqual(texts(0.5), []);
+    assert.deepEqual(texts(1.5), ["a"]);
+    assert.deepEqual(texts(3), []);
+    assert.deepEqual(texts(5.5), ["b", "c"], "overlapping speakers show together");
+    assert.deepEqual(texts(8), ["b"], "a long cue stays visible after a short overlapping one ends");
+    assert.deepEqual(texts(10), []);
+    assert.deepEqual(cuesAt([], 1), []);
+});
+
+test("renderCues stacks overlapping cues, keeping each cue's line breaks", () => {
+    const cues = parseSubtitles("1\n00:00:01,000 --> 00:00:03,000\n- Hi\n- Hello\n\n2\n00:00:02,000 --> 00:00:04,000\nWait\n");
+    assert.equal(renderCues(cuesAt(cues, 2.5)), "- Hi<br>- Hello<br>Wait");
 });
 
 test("renderCue escapes HTML and restores formatting", () => {
