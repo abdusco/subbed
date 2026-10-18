@@ -18,7 +18,8 @@ import {
 /** @typedef {import("./lib.js").Subtitle} Subtitle */
 /**
  * @typedef {{
- *     id: number, video_id: number, video_title: string, status: "queued" | "running" | "done" | "failed",
+ *     id: number, video_id: number, video_title: string, kind: "transcribe" | "translate",
+ *     status: "queued" | "running" | "done" | "failed",
  *     languages: string[], source_language: string, error: string, created_at: number
  * }} Job
  */
@@ -154,12 +155,23 @@ document.addEventListener("alpine:init", () => {
         jobLogs: /** @type {Record<number, { lines: JobLogLine[], complete: boolean }>} */ ({}),
         jobPollTimer: 0,
         generationLanguages: GENERATION_LANGUAGES,
-        generateForm: {
+        transcribeForm: {
             videoId: 0,
             title: "",
             /** @type {string | null} */
             thumbnail: null,
             /** the spoken language; empty lets the model detect it */
+            source: "",
+            busy: false,
+        },
+        translateForm: {
+            videoId: 0,
+            title: "",
+            /** @type {string | null} */
+            thumbnail: null,
+            /** the languages the video has a subtitle in */
+            available: /** @type {string[]} */ ([]),
+            /** the subtitle to translate */
             source: "",
             /** @type {string[]} */
             targets: [],
@@ -190,9 +202,9 @@ document.addEventListener("alpine:init", () => {
             matchMedia("(display-mode: standalone)").addEventListener("change", (event) => (this.installed = event.matches));
             this.$watch("lang", (language) => (document.documentElement.lang = language));
             this.$watch("videoUrlId", (id) => this.suggestTitle(id));
-            // the spoken language is made from the audio, so it can't also be a translation target
-            this.$watch("generateForm.source", (code) => {
-                this.generateForm.targets = this.generateForm.targets.filter((target) => target !== code);
+            // a subtitle can't be translated into its own language
+            this.$watch("translateForm.source", (code) => {
+                this.translateForm.targets = this.translateForm.targets.filter((target) => target !== code);
             });
             document.documentElement.lang = this.lang;
 
@@ -717,46 +729,98 @@ document.addEventListener("alpine:init", () => {
             }
         },
 
-        // ---- generate subtitles ----
+        // ---- transcribe and translate ----
 
-        /** @param {Video} video */
-        openGenerate(video) {
-            let remembered = [];
+        /**
+         * @param {string} code
+         * @returns {string} the language's name and code, e.g. "Türkçe (tr)"
+         */
+        languageLabel(code) {
+            const known = GENERATION_LANGUAGES.find((language) => language.code === code);
+            return known ? `${known.name} (${code})` : code.toUpperCase();
+        },
+
+        /** @returns {string[]} the languages that were picked for the last translation */
+        rememberedTargets() {
             try {
-                remembered = JSON.parse(storage.get(STORAGE_KEYS.lastTargets) ?? "[]");
+                return knownGenerationLanguages(JSON.parse(storage.get(STORAGE_KEYS.lastTargets) ?? "[]"));
             } catch {
                 // a damaged value is the same as none
+                return [];
             }
-            this.generateForm = {
+        },
+
+        /**
+         * Queue a job for a video and show it in the jobs list.
+         * @param {"transcribe" | "translate"} kind
+         * @param {{ videoId: number, busy: boolean }} form
+         * @param {HTMLDialogElement} dialog
+         * @param {Record<string, unknown>} body
+         * @returns {Promise<boolean>} whether the job was queued
+         */
+        async queueJob(kind, form, dialog, body) {
+            form.busy = true;
+            try {
+                await this.api(`/api/admin/videos/${form.videoId}/${kind}`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(body),
+                });
+                dialog.close();
+                this.toast("success", this.t("generation.started"));
+                await this.loadJobs();
+                return true;
+            } catch (error) {
+                this.toast("error", error.message);
+                return false;
+            } finally {
+                form.busy = false;
+            }
+        },
+
+        /** @param {Video} video */
+        openTranscribe(video) {
+            this.transcribeForm = { videoId: video.id, title: video.title, thumbnail: this.thumbnail(video), source: "", busy: false };
+            this.$refs.transcribeDialog.showModal();
+        },
+
+        async submitTranscribe() {
+            if (this.transcribeForm.busy) return;
+            await this.queueJob("transcribe", this.transcribeForm, this.$refs.transcribeDialog, {
+                source_language: this.transcribeForm.source,
+            });
+        },
+
+        get canTranslate() {
+            const { busy, source, targets } = this.translateForm;
+            return !busy && source !== "" && targets.length > 0;
+        },
+
+        /** @param {Video} video */
+        openTranslate(video) {
+            const available = video.subtitles.map((subtitle) => subtitle.language);
+            const source = available.includes("en") ? "en" : (available[0] ?? "");
+            this.translateForm = {
                 videoId: video.id,
                 title: video.title,
                 thumbnail: this.thumbnail(video),
-                source: "",
-                targets: knownGenerationLanguages(remembered),
+                available,
+                source,
+                targets: this.rememberedTargets().filter((code) => code !== source),
                 busy: false,
             };
-            this.$refs.generateDialog.showModal();
+            this.$refs.translateDialog.showModal();
         },
 
-        async submitGenerate() {
-            if (this.generateForm.busy) return;
-            const { videoId, source, targets } = this.generateForm;
-            this.generateForm.busy = true;
-            try {
-                await this.api(`/api/admin/videos/${videoId}/generate`, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ languages: targets, source_language: source }),
-                });
-                storage.set(STORAGE_KEYS.lastTargets, JSON.stringify(targets));
-                this.$refs.generateDialog.close();
-                this.toast("success", this.t("generation.started"));
-                await this.loadJobs();
-            } catch (error) {
-                this.toast("error", error.message);
-            } finally {
-                this.generateForm.busy = false;
-            }
+        async submitTranslate() {
+            if (!this.canTranslate) return;
+            const { source } = this.translateForm;
+            const targets = this.translateForm.targets.filter((code) => code !== source);
+            const queued = await this.queueJob("translate", this.translateForm, this.$refs.translateDialog, {
+                source_language: source,
+                languages: targets,
+            });
+            if (queued) storage.set(STORAGE_KEYS.lastTargets, JSON.stringify(targets));
         },
 
         // ---- generation jobs and their logs ----
@@ -782,8 +846,15 @@ document.addEventListener("alpine:init", () => {
 
         /** @param {Job} job */
         jobSummary(job) {
-            if (!job.languages.length) return this.t("jobs.transcribeOnly");
-            return this.t("jobs.translateTo", { languages: job.languages.map((code) => code.toUpperCase()).join(", ") });
+            if (job.kind !== "translate") {
+                return this.t("jobs.kind.transcribe", {
+                    language: job.source_language ? job.source_language.toUpperCase() : this.t("jobs.autoDetected"),
+                });
+            }
+            return this.t("jobs.kind.translate", {
+                source: job.source_language.toUpperCase(),
+                languages: job.languages.map((code) => code.toUpperCase()).join(", "),
+            });
         },
 
         /**

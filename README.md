@@ -80,10 +80,12 @@ Instead of uploading a file, subbed can make the subtitles from the video's audi
    - set the **transcription model**, any OpenRouter speech-to-text model (empty uses the default, `elevenlabs/scribe-v2`),
    - paste your **YouTube cookies**, which YouTube sometimes asks for before it lets a download through (see below),
    - see the **yt-dlp** version and update it right away.
-3. On a video's card, click **Generate**. Pick the spoken language (or let the model detect it) and the languages to translate into, then click **Start**.
+3. On a video's card there are two separate actions:
+   - **Transcribe** downloads the audio and writes a subtitle in the spoken language. Pick the language, or let the model detect it.
+   - **Translate** takes one of the subtitles the video already has, whether you uploaded it or transcribed it, and translates it into the languages you pick. It needs no download, so it also works on a video YouTube won't let you download.
 4. Follow the job under **Generation jobs**. Open a job to read its log; it updates by itself while the job runs.
 
-The spoken-language subtitle is made first, then each translation. A subtitle in a language the video already has is replaced. A failed translation doesn't stop the others; the job is marked failed and its log says which one. Jobs run one at a time, and a job that was running when the server stopped is marked failed.
+A subtitle in a language the video already has is replaced. A failed translation doesn't stop the others; the job is marked failed and its log says which one. Jobs run one at a time, a video can only have one job queued or running, and a job that was running when the server stopped is marked failed.
 
 **Cookies.** Export them from your browser as a Netscape `cookies.txt` (for example with the "Get cookies.txt LOCALLY" extension) and paste the text in. New values replace old ones with the same domain and name, and other cookies stay. They are stored in the database and are never shown again. Use a throwaway Google account: downloading while signed in can get the account flagged. Anyone who can read your `./data` folder can read the cookies, so protect it and its backups.
 
