@@ -635,6 +635,50 @@ dialog[open] {
     flex-wrap: wrap;
 }
 
+/* a group of checkboxes, two to a row */
+fieldset.field {
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+}
+
+fieldset.field > legend {
+    float: left;
+    width: 100%;
+    margin-bottom: 6px;
+    padding: 0;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.check-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 4px 12px;
+    clear: both;
+}
+
+.check {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-height: 36px;
+    cursor: pointer;
+}
+
+.check input {
+    width: 18px;
+    height: 18px;
+    margin: 0;
+    accent-color: var(--accent);
+}
+
+.check.is-disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
 /* a block of related controls in a dialog, with its own buttons */
 .form-section {
     display: grid;

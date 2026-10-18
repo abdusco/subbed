@@ -3,6 +3,8 @@ import test from "node:test";
 
 import { resolveLanguage, translate } from "../static/admin/i18n.js";
 import {
+    GENERATION_LANGUAGES,
+    knownGenerationLanguages,
     languageFromName,
     matchesQuery,
     normalizeLanguage,
@@ -65,6 +67,16 @@ test("matchesQuery looks at title, url and languages", () => {
     assert.ok(matchesQuery(video, "YOUTU.BE"));
     assert.ok(matchesQuery(video, "tr"));
     assert.ok(!matchesQuery(video, "xyz"));
+});
+
+test("generation languages are valid subtitle codes, and a remembered choice is cleaned up", () => {
+    const codes = GENERATION_LANGUAGES.map((language) => language.code);
+    assert.equal(new Set(codes).size, codes.length);
+    for (const code of codes) assert.equal(normalizeLanguage(code), code);
+
+    assert.deepEqual(knownGenerationLanguages(["tr", "xx", "de", "tr"]), ["de", "tr"]);
+    assert.deepEqual(knownGenerationLanguages("tr"), []);
+    assert.deepEqual(knownGenerationLanguages(null), []);
 });
 
 test("i18n: language resolution, plurals and fallbacks", () => {

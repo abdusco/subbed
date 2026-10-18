@@ -72,6 +72,9 @@
                     <rect x="3" y="5" width="18" height="14" rx="3" />
                     <path d="M7 11h3M7 15h6M14 11h3" />
                 </symbol>
+                <symbol id="i-sparkles" viewBox="0 0 24 24">
+                    <path d="M10 4l1.8 4.7L16.5 10.5l-4.7 1.8L10 17l-1.8-4.7L3.5 10.5l4.7-1.8zM18 3v4M16 5h4M18 15v4M16 17h4" />
+                </symbol>
                 <symbol id="i-refresh" viewBox="0 0 24 24">
                     <path d="M20 11a8 8 0 0 0-14-4L4 9M4 4v5h5M4 13a8 8 0 0 0 14 4l2-2M20 20v-5h-5" />
                 </symbol>
@@ -255,6 +258,16 @@
                                 <button class="btn btn-small" type="button" @click="openUpload({ videoId: video.id })">
                                     <svg class="icon"><use href="#i-upload" /></svg>
                                     <span x-text="t('subtitle.add')"></span>
+                                </button>
+                                <button
+                                    class="btn btn-small"
+                                    type="button"
+                                    :aria-label="t('generation.generateLabel')"
+                                    :title="t('generation.generateLabel')"
+                                    @click="openGenerate(video)"
+                                >
+                                    <svg class="icon"><use href="#i-sparkles" /></svg>
+                                    <span x-text="t('generation.generate')"></span>
                                 </button>
                                 <button
                                     class="btn btn-small"
@@ -451,6 +464,67 @@
                     <button class="btn btn-ghost" type="button" @click="$refs.editDialog.close()" x-text="t('common.cancel')"></button>
                     <button class="btn btn-primary" type="submit" :disabled="!canSaveEdit">
                         <span x-text="editForm.busy ? t('common.working') : t('common.save')"></span>
+                    </button>
+                </div>
+            </form>
+        </dialog>
+
+        <!-- generate subtitles for a video -->
+        <dialog x-ref="generateDialog" @click="closeOnBackdrop($event)">
+            <form class="dialog-form" method="dialog" @submit.prevent="submitGenerate()">
+                <div class="dialog-head">
+                    <h2 x-text="t('generation.generateTitle')"></h2>
+                    <button
+                        class="btn btn-ghost btn-icon"
+                        type="button"
+                        :aria-label="t('common.close')"
+                        @click="$refs.generateDialog.close()"
+                    >
+                        <svg class="icon"><use href="#i-x" /></svg>
+                    </button>
+                </div>
+
+                <div class="video-context">
+                    <img x-show="generateForm.thumbnail" :src="generateForm.thumbnail" alt="" @error="$el.remove()" />
+                    <div>
+                        <span class="hint" x-text="t('generation.forVideo')"></span>
+                        <p class="name" x-text="generateForm.title"></p>
+                    </div>
+                </div>
+
+                <label class="field">
+                    <span x-text="t('generation.source')"></span>
+                    <select x-model="generateForm.source">
+                        <option value="" x-text="t('generation.sourceAuto')"></option>
+                        <template x-for="language in generationLanguages" :key="language.code">
+                            <option :value="language.code" x-text="`${language.name} (${language.code})`"></option>
+                        </template>
+                    </select>
+                    <span class="hint" x-text="t('generation.sourceHint')"></span>
+                </label>
+
+                <fieldset class="field">
+                    <legend x-text="t('generation.targets')"></legend>
+                    <div class="check-grid">
+                        <template x-for="language in generationLanguages" :key="language.code">
+                            <label class="check" :class="{ 'is-disabled': language.code === generateForm.source }">
+                                <input
+                                    type="checkbox"
+                                    :value="language.code"
+                                    x-model="generateForm.targets"
+                                    :disabled="language.code === generateForm.source"
+                                />
+                                <span x-text="language.name"></span>
+                            </label>
+                        </template>
+                    </div>
+                    <span class="hint" x-text="t('generation.targetsHint')"></span>
+                </fieldset>
+
+                <div class="dialog-foot">
+                    <button class="btn btn-ghost" type="button" @click="$refs.generateDialog.close()" x-text="t('common.cancel')"></button>
+                    <button class="btn btn-primary" type="submit" :disabled="generateForm.busy">
+                        <span x-text="generateForm.busy ? t('common.working') : t('generation.start')"></span>
                     </button>
                 </div>
             </form>

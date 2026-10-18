@@ -8,6 +8,36 @@ const VIDEO_ID_PATTERN = /^[A-Za-z0-9_-]{11}$/;
 const TIMELINE_PATTERN = /(\d{1,2}:)?\d{2}:\d{2}[,.]\d{3}\s*-->\s*(\d{1,2}:)?\d{2}:\d{2}[,.]\d{3}/;
 const LANGUAGE_PATTERN = /^[a-z]{2,3}(-[a-z0-9]{2,8})*$/;
 
+/** Languages offered for generated subtitles, named in themselves. The server knows the same codes. */
+export const GENERATION_LANGUAGES = [
+    { code: "ar", name: "العربية" },
+    { code: "de", name: "Deutsch" },
+    { code: "en", name: "English" },
+    { code: "es", name: "Español" },
+    { code: "fr", name: "Français" },
+    { code: "hi", name: "हिन्दी" },
+    { code: "it", name: "Italiano" },
+    { code: "ja", name: "日本語" },
+    { code: "ko", name: "한국어" },
+    { code: "nl", name: "Nederlands" },
+    { code: "pl", name: "Polski" },
+    { code: "pt-br", name: "Português (Brasil)" },
+    { code: "ru", name: "Русский" },
+    { code: "tr", name: "Türkçe" },
+    { code: "uk", name: "Українська" },
+    { code: "zh", name: "中文" },
+];
+
+/**
+ * Keep the language codes that can be offered, in the order of GENERATION_LANGUAGES. Used for a remembered choice.
+ * @param {unknown} codes
+ * @returns {string[]}
+ */
+export function knownGenerationLanguages(codes) {
+    if (!Array.isArray(codes)) return [];
+    return GENERATION_LANGUAGES.map((language) => language.code).filter((code) => codes.includes(code));
+}
+
 /**
  * Extract the YouTube video id from a watch/short/embed URL or a bare 11-character id.
  * @param {string} input

@@ -1,5 +1,7 @@
 import { resolveLanguage, translate } from "./i18n.js";
 import {
+    GENERATION_LANGUAGES,
+    knownGenerationLanguages,
     languageFromName,
     matchesQuery,
     normalizeLanguage,
@@ -19,6 +21,7 @@ const STORAGE_KEYS = {
     theme: "subbed-admin-theme",
     language: "subbed-admin-language",
     lastSubtitleLanguage: "subbed-admin-last-subtitle-language",
+    lastTargets: "subbed-admin-last-generation-targets",
 };
 const REFRESH_MIN_INTERVAL_MS = 5000;
 const TOAST_DURATION_MS = { success: 3500, error: 6000 };
@@ -128,6 +131,18 @@ document.addEventListener("alpine:init", () => {
         },
         editForm: { id: 0, url: "", original: "", title: "", busy: false },
         confirmation: { kind: /** @type {"video" | "subtitle"} */ ("video"), id: 0, label: "", busy: false },
+        generationLanguages: GENERATION_LANGUAGES,
+        generateForm: {
+            videoId: 0,
+            title: "",
+            /** @type {string | null} */
+            thumbnail: null,
+            /** the spoken language; empty lets the model detect it */
+            source: "",
+            /** @type {string[]} */
+            targets: [],
+            busy: false,
+        },
         generation: {
             failed: false,
             /** the model field; savedModel is what the server has, empty meaning its default */
@@ -153,6 +168,10 @@ document.addEventListener("alpine:init", () => {
             matchMedia("(display-mode: standalone)").addEventListener("change", (event) => (this.installed = event.matches));
             this.$watch("lang", (language) => (document.documentElement.lang = language));
             this.$watch("videoUrlId", (id) => this.suggestTitle(id));
+            // the spoken language is made from the audio, so it can't also be a translation target
+            this.$watch("generateForm.source", (code) => {
+                this.generateForm.targets = this.generateForm.targets.filter((target) => target !== code);
+            });
             document.documentElement.lang = this.lang;
 
             window.addEventListener("online", () => {
@@ -668,6 +687,47 @@ document.addEventListener("alpine:init", () => {
                 this.toast("error", error.message);
             } finally {
                 this.confirmation.busy = false;
+            }
+        },
+
+        // ---- generate subtitles ----
+
+        /** @param {Video} video */
+        openGenerate(video) {
+            let remembered = [];
+            try {
+                remembered = JSON.parse(storage.get(STORAGE_KEYS.lastTargets) ?? "[]");
+            } catch {
+                // a damaged value is the same as none
+            }
+            this.generateForm = {
+                videoId: video.id,
+                title: video.title,
+                thumbnail: this.thumbnail(video),
+                source: "",
+                targets: knownGenerationLanguages(remembered),
+                busy: false,
+            };
+            this.$refs.generateDialog.showModal();
+        },
+
+        async submitGenerate() {
+            if (this.generateForm.busy) return;
+            const { videoId, source, targets } = this.generateForm;
+            this.generateForm.busy = true;
+            try {
+                await this.api(`/api/admin/videos/${videoId}/generate`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ languages: targets, source_language: source }),
+                });
+                storage.set(STORAGE_KEYS.lastTargets, JSON.stringify(targets));
+                this.$refs.generateDialog.close();
+                this.toast("success", this.t("generation.started"));
+            } catch (error) {
+                this.toast("error", error.message);
+            } finally {
+                this.generateForm.busy = false;
             }
         },
 
