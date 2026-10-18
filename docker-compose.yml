@@ -1,14 +1,13 @@
-version: '3.8'
-
 services:
   subbed:
     image: ghcr.io/abdusco/subbed:latest
     ports:
       - "3000:3000"
     environment:
+      - HOST=0.0.0.0 # listen on all interfaces inside the container, or the published port can't reach it
       - DATABASE_PATH=/app/data/subbed.db
-      - ADMIN_CREDENTIALS=admin:admin
-      - DEBUG=false
+      - ADMIN_CREDENTIALS=admin:change-me
+      - DEBUG=0
     volumes:
       - ./data:/app/data
     restart: unless-stopped
