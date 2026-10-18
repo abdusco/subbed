@@ -67,7 +67,7 @@ Shortcuts for step 4:
 - **Drop** a subtitle file anywhere on the admin page, or **paste** it with Ctrl+V (Cmd+V on a Mac). You can even paste the subtitle text itself.
 - If the file name ends in a language code, like `movie.tr.srt`, the language is filled in for you.
 
-To remove a subtitle, click the **×** on its tag. **Delete** removes the video and all of its subtitles.
+To rename a video, click **Edit** on its card. To remove a subtitle, click the **×** on its tag. **Delete** removes the video and all of its subtitles.
 
 ### Watch a video
 
@@ -174,6 +174,7 @@ Admin (HTTP Basic auth):
 - `GET /api/admin/videos`: list videos with their subtitles (without content)
 - `GET /api/admin/oembed?url=...`: look up a video's title through YouTube's oEmbed endpoint, as `{ "title": "...", "author": "..." }`
 - `POST /api/admin/videos`: add a video, JSON body `{ "url": "...", "title": "..." }`
+- `PATCH /api/admin/videos/:id`: change a video's title, JSON body `{ "title": "..." }`
 - `DELETE /api/admin/videos/:id`: delete a video and its subtitles
 - `POST /api/admin/subtitles`: upload a subtitle, multipart form with `video_id`, `language`, `type` (`srt` or `vtt`) and `file`
 - `DELETE /api/admin/subtitles/:id`: delete a subtitle

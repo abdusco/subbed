@@ -126,6 +126,7 @@ document.addEventListener("alpine:init", () => {
             busy: false,
             dragging: false,
         },
+        editForm: { id: 0, url: "", original: "", title: "", busy: false },
         confirmation: { kind: /** @type {"video" | "subtitle"} */ ("video"), id: 0, label: "", busy: false },
 
         // ---- lifecycle ----
@@ -410,6 +411,40 @@ document.addEventListener("alpine:init", () => {
                 this.toast("error", error.message);
             } finally {
                 this.videoForm.busy = false;
+            }
+        },
+
+        // ---- edit video ----
+
+        /** Save is only useful when the title is not empty and differs from the stored one. */
+        get canSaveEdit() {
+            const title = this.editForm.title.trim();
+            return title !== "" && title !== this.editForm.original && !this.editForm.busy;
+        },
+
+        /** @param {Video} video */
+        openEdit(video) {
+            this.editForm = { id: video.id, url: video.original_url, original: video.title, title: video.title, busy: false };
+            this.$refs.editDialog.showModal();
+            this.$nextTick(() => this.$refs.editDialog.querySelector("input")?.select());
+        },
+
+        async submitEdit() {
+            if (!this.canSaveEdit) return;
+            this.editForm.busy = true;
+            try {
+                await this.api(`/api/admin/videos/${this.editForm.id}`, {
+                    method: "PATCH",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ title: this.editForm.title.trim() }),
+                });
+                this.$refs.editDialog.close();
+                this.toast("success", this.t("video.updated"));
+                await this.loadVideos();
+            } catch (error) {
+                this.toast("error", error.message);
+            } finally {
+                this.editForm.busy = false;
             }
         },
 
