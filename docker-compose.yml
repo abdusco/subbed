@@ -7,6 +7,7 @@ services:
       - HOST=0.0.0.0 # listen on all interfaces inside the container, or the published port can't reach it
       - DATABASE_PATH=/app/data/subbed.db
       - ADMIN_CREDENTIALS=admin:change-me
+      - OPENROUTER_API_KEY= # needed to generate subtitles with AI
       - DEBUG=0
     volumes:
       - ./data:/app/data

@@ -20,8 +20,9 @@ FROM alpine:latest
 
 WORKDIR /app
 
-# Install runtime dependencies
-RUN apk add --no-cache ca-certificates
+# Install runtime dependencies: ffmpeg cuts the audio for transcription, and yt-dlp needs a JavaScript runtime
+# for YouTube. yt-dlp itself is downloaded on first start into the data directory, so it can update itself.
+RUN apk add --no-cache ca-certificates ffmpeg nodejs
 
 # Copy the binary from builder
 COPY --from=builder /app/subbed .

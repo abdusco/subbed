@@ -4,7 +4,7 @@ Watch YouTube videos with your own subtitles.
 
 You add a video and upload subtitle files for it (SRT or VTT). When you open the video in subbed, the subtitles show on top of the player, in sync. A video can have subtitles in several languages, and you pick which one to show.
 
-subbed is a small self-hosted app: one container, no external services except YouTube itself.
+subbed is a small self-hosted app: one container, no external services except YouTube itself. Optionally, it can make the subtitles for you: it downloads a video's audio, transcribes it with an AI model and translates the result into the languages you pick (this needs an [OpenRouter](https://openrouter.ai) API key).
 
 ## Quick start
 
@@ -71,6 +71,26 @@ A video has one subtitle per language: uploading a language again replaces the o
 
 To rename a video, click **Edit** on its card. To remove a subtitle, click the **×** on its tag. **Delete** removes the video and all of its subtitles.
 
+### Generate subtitles with AI
+
+Instead of uploading a file, subbed can make the subtitles from the video's audio.
+
+1. Set `OPENROUTER_API_KEY` (see [Configuration](#configuration)) and restart.
+2. Open the menu in the top bar and choose **Subtitle generation**. Here you can:
+   - set the **transcription model**, any OpenRouter speech-to-text model (empty uses the default, `elevenlabs/scribe-v2`),
+   - paste your **YouTube cookies**, which YouTube sometimes asks for before it lets a download through (see below),
+   - see the **yt-dlp** version and update it right away.
+3. On a video's card, click **Generate**. Pick the spoken language (or let the model detect it) and the languages to translate into, then click **Start**.
+4. Follow the job under **Generation jobs**. Open a job to read its log; it updates by itself while the job runs.
+
+The spoken-language subtitle is made first, then each translation. A subtitle in a language the video already has is replaced. A failed translation doesn't stop the others; the job is marked failed and its log says which one. Jobs run one at a time, and a job that was running when the server stopped is marked failed.
+
+**Cookies.** Export them from your browser as a Netscape `cookies.txt` (for example with the "Get cookies.txt LOCALLY" extension) and paste the text in. New values replace old ones with the same domain and name, and other cookies stay. They are stored in the database and are never shown again. Use a throwaway Google account: downloading while signed in can get the account flagged. Anyone who can read your `./data` folder can read the cookies, so protect it and its backups.
+
+**yt-dlp.** If a `yt-dlp` is in the `PATH`, subbed uses it and leaves updating to you. Otherwise it downloads the latest nightly build to `bin/yt-dlp` next to the database on first start and updates it every night at 03:00. Set `YTDLP_PATH` to keep it somewhere else.
+
+**Cost and quality.** Transcription and translation are paid OpenRouter calls, and a long video means many of them. The result is AI text that viewers will read, so check it before relying on it.
+
 ### Watch a video
 
 Open the player and paste a YouTube link, or go straight to it:
@@ -116,6 +136,9 @@ Set these as environment variables.
 | `DATABASE_PATH`     | `./subbed.db` | Where the SQLite database is stored. In Docker, use a path inside your mounted volume.                     |
 | `HOST`              | `127.0.0.1`   | Network interface to listen on. Use `0.0.0.0` in Docker or to allow other devices to connect.              |
 | `PORT`              | `3000`        | Port to listen on.                                                                                         |
+| `OPENROUTER_API_KEY` |              | OpenRouter key for generating subtitles. Without it, the **Generate** button answers that it isn't set.    |
+| `TRANSLATE_MODEL`   | `google/gemini-3.5-flash-lite` | OpenRouter chat model used for translations.                                              |
+| `YTDLP_PATH`        | `<data dir>/bin/yt-dlp` | Where subbed keeps its own yt-dlp when none is in the `PATH`.                                   |
 | `LISTEN_ADDR`       |               | Full address such as `0.0.0.0:8080`. Overrides `HOST` and `PORT`.                                          |
 | `DEBUG`             | `0`           | Set to `1` to serve the web files from disk and log in a readable format instead of JSON. For development. |
 
@@ -124,6 +147,7 @@ Set these as environment variables.
 - **Choose a real admin password.** `admin:admin` is only for trying subbed out.
 - **Use HTTPS if it's reachable from the internet.** The admin password is sent when you sign in, so put subbed behind a reverse proxy that provides HTTPS (Caddy, Traefik or nginx). The sign-in cookie is marked `Secure` when the proxy sends `X-Forwarded-Proto: https`.
 - **Set `SESSION_SECRET` for sign-ins that survive restarts.** Use a long random value, for example `openssl rand -hex 32`. Changing it signs everyone out. Failed sign-ins are rate limited per client. The admin page can only be installed as an app over HTTPS, apart from `localhost`.
+- **Treat the stored YouTube cookies like a password.** They let anyone who reads the database act as that Google account on YouTube. The API never sends them back.
 - **The player is public.** Anyone who can reach the server can watch any video you added. Adding, changing or deleting videos and subtitles requires the admin login.
 
 ## For developers
@@ -141,7 +165,7 @@ go test ./...
 node --test tests/*.mjs
 ```
 
-- **Layout:** `static/index.html` and `static/player/` are the player; `static/admin.html`, `static/admin/` and `static/admin-sw.js` are the admin app.
+- **Layout:** `static/index.html` and `static/player/` are the player; `static/admin.html`, `static/admin/` and `static/admin-sw.js` are the admin app. `internal/youtube` has the oEmbed client and the yt-dlp wrapper; `internal/subtitle` turns audio into SRT and translates it (it knows nothing about HTTP or the database). Running it locally needs `ffmpeg` and `ffprobe` for the transcription step.
 - **Admin service worker:** it caches the admin app shell for offline start. Bump `SHELL_VERSION` in `static/admin-sw.js` whenever a file it caches changes, or users keep the old version. Open tabs then show a "new version is ready" banner.
 - **Debug mode and the service worker:** with `DEBUG=1`, edits can look ignored until you bump the version, clear the site's service worker, or tick "Update on reload" in your browser's developer tools.
 
@@ -186,6 +210,14 @@ Admin (needs the session cookie; without it the API answers `401`, and `/admin` 
 - `PATCH /api/admin/videos/:id`: change a video's title, JSON body `{ "title": "..." }`
 - `DELETE /api/admin/videos/:id`: delete a video and its subtitles
 - `POST /api/admin/subtitles`: upload a subtitle, multipart form with `video_id`, `language`, `type` (`srt` or `vtt`) and `file`
-- `DELETE /api/admin/subtitles/:id`: delete a subtitle
+- `DELETE /api/admin/subtitles/:id`: delete a subtitle (uploading a language again replaces that language's subtitle)
+- `POST /api/admin/videos/:id/generate`: queue a job, JSON body `{ "languages": ["tr", "de"], "source_language": "en" }`. `source_language` is optional (empty detects it). Answers `202` with the job; `409` if the video already has a queued or running job, `503` if `OPENROUTER_API_KEY` is not set.
+- `GET /api/admin/jobs`: the 50 newest jobs, each with `status` (`queued`, `running`, `done` or `failed`), `languages`, `error` and `created_at`
+- `GET /api/admin/jobs/:id/logs?after=LOG_ID`: the job and the log lines after the one with that id (`{ "job": {...}, "logs": [{ "id", "at", "level", "message" }] }`), so a page can poll
+- `GET /api/admin/cookies`: how many cookies are stored and for which domains, as `{ "count": 2, "domains": ["youtube.com"] }`; never the values
+- `PUT /api/admin/cookies`: JSON body `{ "cookies": "<text of a Netscape cookies.txt>" }`; upserts by domain and name
+- `DELETE /api/admin/cookies`: remove all cookies
+- `GET /api/admin/settings`, `PUT /api/admin/settings`: `{ "transcribe_model": "...", "transcribe_model_default": "..." }`; an empty model restores the default
+- `GET /api/admin/yt-dlp`: `{ "installed": true, "version": "..." }`; `POST /api/admin/yt-dlp/update` updates it
 
 </details>
