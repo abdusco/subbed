@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"embed"
 	"errors"
@@ -11,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"path"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -137,11 +139,22 @@ func run() error {
 		return err
 	}
 
-	e := newServer(serverConfig{repo: repo, assets: assets, creds: creds, sessionKey: sessionKey, debug: debug, logger: logger})
+	// the binary lives next to the database, so it is on the persistent volume and can update itself
+	ytdlp := youtube.NewYtDlp(cmp.Or(os.Getenv("YTDLP_PATH"), filepath.Join(filepath.Dir(dbPath), "bin", "yt-dlp")))
+
+	e := newServer(serverConfig{repo: repo, assets: assets, creds: creds, sessionKey: sessionKey, debug: debug, logger: logger, ytdlp: ytdlp})
 
 	addr := listenAddress()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	go func() {
+		// the first download can take a while, so it must not hold up the server
+		if err := ytdlp.Ensure(ctx); err != nil {
+			logger.Error("Couldn't install yt-dlp", "error", err)
+		}
+		ytdlp.RunUpdater(ctx, logger)
+	}()
 
 	serverErr := make(chan error, 1)
 	go func() {
@@ -172,6 +185,8 @@ type serverConfig struct {
 	debug      bool
 	logger     *slog.Logger
 	oembed     *youtube.OEmbedClient
+	// ytdlp is optional; without it the yt-dlp routes are not served
+	ytdlp ytDlpTool
 }
 
 // newServer builds the HTTP server with all routes and middleware.
@@ -218,6 +233,10 @@ func newServer(cfg serverConfig) *echo.Echo {
 		cfg.oembed = youtube.NewOEmbedClient(nil, "")
 	}
 	admin.GET("/oembed", handleOEmbed(cfg.oembed))
+	if cfg.ytdlp != nil {
+		admin.GET("/yt-dlp", ytDlpInfo(cfg.ytdlp))
+		admin.POST("/yt-dlp/update", ytDlpUpdate(cfg.ytdlp))
+	}
 
 	e.GET("/static/*", serveStatic(cfg.debug), quiet)
 	// the player is addressed as /<youtube url>

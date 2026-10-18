@@ -37,6 +37,11 @@ func newTestApp(t *testing.T) *testApp {
 
 func newTestAppWith(t *testing.T, oembedURL string) *testApp {
 	t.Helper()
+	return newTestAppConfigured(t, oembedURL, nil)
+}
+
+func newTestAppConfigured(t *testing.T, oembedURL string, ytdlp ytDlpTool) *testApp {
+	t.Helper()
 	repo, err := NewRepository(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -54,7 +59,7 @@ func newTestAppWith(t *testing.T, oembedURL string) *testApp {
 	}
 	logs := &bytes.Buffer{}
 	logger := slog.New(slog.NewJSONHandler(logs, nil))
-	e := newServer(serverConfig{repo: repo, assets: assets, creds: testCreds, sessionKey: testKey, logger: logger, oembed: youtube.NewOEmbedClient(nil, oembedURL)})
+	e := newServer(serverConfig{repo: repo, assets: assets, creds: testCreds, sessionKey: testKey, logger: logger, oembed: youtube.NewOEmbedClient(nil, oembedURL), ytdlp: ytdlp})
 	return &testApp{t: t, handler: e, logs: logs}
 }
 

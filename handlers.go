@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"io"
@@ -115,6 +116,34 @@ func handleOEmbed(client *youtube.OEmbedClient) echo.HandlerFunc {
 		}
 
 		return c.JSON(http.StatusOK, result)
+	}
+}
+
+// ytDlpTool is the part of yt-dlp the admin routes use.
+type ytDlpTool interface {
+	Version(ctx context.Context) (string, error)
+	Update(ctx context.Context) (version, output string, err error)
+}
+
+type ytDlpStatus struct {
+	Installed bool   `json:"installed"`
+	Version   string `json:"version"`
+}
+
+func ytDlpInfo(ytdlp ytDlpTool) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		version, err := ytdlp.Version(c.Request().Context())
+		return c.JSON(http.StatusOK, ytDlpStatus{Installed: err == nil, Version: version})
+	}
+}
+
+func ytDlpUpdate(ytdlp ytDlpTool) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		version, output, err := ytdlp.Update(c.Request().Context())
+		if err != nil {
+			return echo.NewHTTPError(http.StatusBadGateway, "Couldn't update yt-dlp").SetInternal(err)
+		}
+		return c.JSON(http.StatusOK, map[string]any{"installed": true, "version": version, "output": output})
 	}
 }
 
