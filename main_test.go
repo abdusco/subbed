@@ -28,6 +28,7 @@ type testApp struct {
 	t       *testing.T
 	handler http.Handler
 	logs    *bytes.Buffer
+	repo    *Repository
 }
 
 func newTestApp(t *testing.T) *testApp {
@@ -60,7 +61,7 @@ func newTestAppConfigured(t *testing.T, oembedURL string, ytdlp ytDlpTool) *test
 	logs := &bytes.Buffer{}
 	logger := slog.New(slog.NewJSONHandler(logs, nil))
 	e := newServer(serverConfig{repo: repo, assets: assets, creds: testCreds, sessionKey: testKey, logger: logger, oembed: youtube.NewOEmbedClient(nil, oembedURL), ytdlp: ytdlp})
-	return &testApp{t: t, handler: e, logs: logs}
+	return &testApp{t: t, handler: e, logs: logs, repo: repo}
 }
 
 func (a *testApp) do(method, target string, body io.Reader, headers map[string]string, authed bool) *httptest.ResponseRecorder {

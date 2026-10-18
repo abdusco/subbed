@@ -115,6 +115,29 @@ func (r *Repository) initDB() error {
 		return fmt.Errorf("failed to create subtitles index: %w", err)
 	}
 
+	// Browser cookies for yt-dlp
+	_, err = sqlDB.Exec(`
+		CREATE TABLE IF NOT EXISTS cookies (
+			domain TEXT NOT NULL,
+			key TEXT NOT NULL,
+			value TEXT NOT NULL,
+			path TEXT NOT NULL DEFAULT '/',
+			secure INTEGER NOT NULL DEFAULT 0,
+			http_only INTEGER NOT NULL DEFAULT 0,
+			expires INTEGER NOT NULL DEFAULT 0,
+			PRIMARY KEY (domain, key)
+		)
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to create cookies table: %w", err)
+	}
+
+	// Settings that the admin can change
+	_, err = sqlDB.Exec(`CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)`)
+	if err != nil {
+		return fmt.Errorf("failed to create settings table: %w", err)
+	}
+
 	return nil
 }
 

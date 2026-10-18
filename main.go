@@ -233,6 +233,11 @@ func newServer(cfg serverConfig) *echo.Echo {
 		cfg.oembed = youtube.NewOEmbedClient(nil, "")
 	}
 	admin.GET("/oembed", handleOEmbed(cfg.oembed))
+	admin.GET("/cookies", getCookies(cfg.repo))
+	admin.PUT("/cookies", saveCookies(cfg.repo))
+	admin.DELETE("/cookies", deleteCookies(cfg.repo))
+	admin.GET("/settings", getSettings(cfg.repo))
+	admin.PUT("/settings", updateSettings(cfg.repo))
 	if cfg.ytdlp != nil {
 		admin.GET("/yt-dlp", ytDlpInfo(cfg.ytdlp))
 		admin.POST("/yt-dlp/update", ytDlpUpdate(cfg.ytdlp))
