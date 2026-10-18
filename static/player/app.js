@@ -145,7 +145,12 @@ document.addEventListener("alpine:init", () => {
             this.$watch("lang", (language) => (document.documentElement.lang = language));
             document.documentElement.lang = this.lang;
 
-            document.addEventListener("fullscreenchange", () => (this.fullscreen = Boolean(document.fullscreenElement)));
+            document.addEventListener("fullscreenchange", () => {
+                this.fullscreen = Boolean(document.fullscreenElement);
+                // a phone held upright wastes most of the screen on a 16:9 video; the lock only works in fullscreen
+                if (this.fullscreen) screen.orientation?.lock?.("landscape").catch(() => {});
+                else screen.orientation?.unlock?.();
+            });
             window.addEventListener("popstate", () => this.route());
             window.addEventListener("paste", (event) => this.onPaste(event));
             window.addEventListener("pagehide", () => this.stopSync());
