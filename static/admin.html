@@ -97,7 +97,7 @@
             </button>
         </header>
 
-        <div id="settings" class="settings" popover>
+        <div id="settings" class="settings" x-ref="settings" popover>
             <h2 x-text="t('settings.title')"></h2>
 
             <label class="field">
@@ -145,6 +145,11 @@
                     <p class="hint" x-text="t('settings.installManual')"></p>
                 </template>
             </div>
+
+            <button class="btn btn-ghost" type="button" @click="openGeneration()">
+                <svg class="icon"><use href="#i-captions" /></svg>
+                <span x-text="t('generation.open')"></span>
+            </button>
 
             <button class="btn btn-ghost" type="button" @click="signOut()">
                 <svg class="icon"><use href="#i-logout" /></svg>
@@ -449,6 +454,94 @@
                     </button>
                 </div>
             </form>
+        </dialog>
+
+        <!-- subtitle generation settings -->
+        <dialog x-ref="generationDialog" @click="closeOnBackdrop($event)">
+            <div class="dialog-form">
+                <div class="dialog-head">
+                    <h2 x-text="t('generation.title')"></h2>
+                    <button
+                        class="btn btn-ghost btn-icon"
+                        type="button"
+                        :aria-label="t('common.close')"
+                        @click="$refs.generationDialog.close()"
+                    >
+                        <svg class="icon"><use href="#i-x" /></svg>
+                    </button>
+                </div>
+
+                <p class="error-text" x-show="generation.failed" x-text="t('generation.loadFailed')"></p>
+
+                <form class="form-section" @submit.prevent="saveModel()">
+                    <label class="field">
+                        <span x-text="t('generation.model')"></span>
+                        <input
+                            type="text"
+                            x-model="generation.model"
+                            :placeholder="t('generation.modelPlaceholder', { model: generation.modelDefault })"
+                            maxlength="200"
+                            autocomplete="off"
+                            autocapitalize="none"
+                            spellcheck="false"
+                        />
+                        <span class="hint" x-text="t('generation.modelHint', { model: generation.modelDefault })"></span>
+                    </label>
+                    <div class="section-actions">
+                        <button class="btn btn-primary btn-small" type="submit" :disabled="!canSaveModel">
+                            <span x-text="generation.busy === 'model' ? t('common.working') : t('common.save')"></span>
+                        </button>
+                    </div>
+                </form>
+
+                <form class="form-section" @submit.prevent="saveCookies()">
+                    <label class="field">
+                        <span x-text="t('generation.cookies')"></span>
+                        <textarea
+                            x-model="generation.cookiesText"
+                            rows="5"
+                            placeholder="# Netscape HTTP Cookie File"
+                            autocomplete="off"
+                            autocapitalize="none"
+                            spellcheck="false"
+                        ></textarea>
+                        <span class="hint" x-text="cookieSummary"></span>
+                        <span class="hint" x-text="t('generation.cookiesHint')"></span>
+                    </label>
+                    <div class="section-actions">
+                        <button
+                            class="btn btn-small btn-danger-text"
+                            type="button"
+                            :disabled="!generation.cookieCount || generation.busy !== ''"
+                            @click="clearCookies()"
+                            x-text="t('generation.cookiesClear')"
+                        ></button>
+                        <button
+                            class="btn btn-primary btn-small"
+                            type="submit"
+                            :disabled="!generation.cookiesText.trim() || generation.busy !== ''"
+                        >
+                            <span x-text="generation.busy === 'cookies' ? t('common.working') : t('generation.cookiesSave')"></span>
+                        </button>
+                    </div>
+                </form>
+
+                <div class="form-section">
+                    <div class="field">
+                        <span x-text="t('generation.ytdlp')"></span>
+                        <span
+                            class="hint"
+                            x-text="generation.ytdlpInstalled ? t('generation.ytdlpVersion', { version: generation.ytdlpVersion }) : t('generation.ytdlpMissing')"
+                        ></span>
+                    </div>
+                    <div class="section-actions">
+                        <button class="btn btn-small" type="button" :disabled="generation.busy !== ''" @click="updateYtDlp()">
+                            <svg class="icon"><use href="#i-refresh" /></svg>
+                            <span x-text="generation.busy === 'ytdlp' ? t('common.working') : t('generation.ytdlpUpdate')"></span>
+                        </button>
+                    </div>
+                </div>
+            </div>
         </dialog>
 
         <!-- confirm delete -->

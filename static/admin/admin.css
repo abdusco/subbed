@@ -311,6 +311,7 @@ input[type="text"],
 input[type="url"],
 input[type="search"],
 input[type="password"],
+textarea,
 select {
     width: 100%;
     min-height: 44px;
@@ -321,12 +322,24 @@ select {
     transition: border-color 0.15s;
 }
 
+textarea {
+    padding: 10px 14px;
+    font:
+        12.5px / 1.5 ui-monospace,
+        SFMono-Regular,
+        Menlo,
+        monospace;
+    resize: vertical;
+}
+
 input:hover,
+textarea:hover,
 select:hover {
     border-color: color-mix(in srgb, var(--accent) 40%, var(--line));
 }
 
 input:focus,
+textarea:focus,
 select:focus {
     outline: none;
     border-color: var(--accent);
@@ -616,6 +629,21 @@ dialog[open] {
 }
 
 .dialog-foot {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+/* a block of related controls in a dialog, with its own buttons */
+.form-section {
+    display: grid;
+    gap: 10px;
+    padding-top: 18px;
+    border-top: 1px solid var(--line);
+}
+
+.section-actions {
     display: flex;
     justify-content: flex-end;
     gap: 8px;

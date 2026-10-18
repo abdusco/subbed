@@ -128,6 +128,21 @@ document.addEventListener("alpine:init", () => {
         },
         editForm: { id: 0, url: "", original: "", title: "", busy: false },
         confirmation: { kind: /** @type {"video" | "subtitle"} */ ("video"), id: 0, label: "", busy: false },
+        generation: {
+            failed: false,
+            /** the model field; savedModel is what the server has, empty meaning its default */
+            model: "",
+            savedModel: "",
+            modelDefault: "",
+            cookiesText: "",
+            cookieCount: 0,
+            /** @type {string[]} */
+            cookieDomains: [],
+            ytdlpInstalled: false,
+            ytdlpVersion: "",
+            /** the action in progress, so only one runs at a time */
+            busy: /** @type {"" | "model" | "cookies" | "ytdlp"} */ (""),
+        },
 
         // ---- lifecycle ----
 
@@ -654,6 +669,116 @@ document.addEventListener("alpine:init", () => {
             } finally {
                 this.confirmation.busy = false;
             }
+        },
+
+        // ---- subtitle generation settings ----
+
+        get canSaveModel() {
+            return this.generation.busy === "" && this.generation.model.trim() !== this.generation.savedModel;
+        },
+
+        get cookieSummary() {
+            const { cookieCount, cookieDomains } = this.generation;
+            if (!cookieCount) return this.t("generation.cookiesNone");
+            return this.t("generation.cookiesStored", { n: cookieCount, domains: cookieDomains.join(", ") });
+        },
+
+        /** @param {{ transcribe_model: string, transcribe_model_default: string }} settings */
+        applySettings(settings) {
+            this.generation.model = settings.transcribe_model;
+            this.generation.savedModel = settings.transcribe_model;
+            this.generation.modelDefault = settings.transcribe_model_default;
+        },
+
+        /** @param {{ count: number, domains: string[] }} summary */
+        applyCookies(summary) {
+            this.generation.cookieCount = summary.count;
+            this.generation.cookieDomains = summary.domains;
+        },
+
+        /** @param {{ installed: boolean, version: string }} status */
+        applyYtDlp(status) {
+            this.generation.ytdlpInstalled = status.installed;
+            this.generation.ytdlpVersion = status.version;
+        },
+
+        async openGeneration() {
+            this.$refs.settings.hidePopover?.();
+            this.$refs.generationDialog.showModal();
+            this.generation.failed = false;
+            try {
+                const [settings, cookies, ytdlp] = await Promise.all([
+                    this.api("/api/admin/settings"),
+                    this.api("/api/admin/cookies"),
+                    this.api("/api/admin/yt-dlp").catch(() => ({ installed: false, version: "" })),
+                ]);
+                this.applySettings(settings);
+                this.applyCookies(cookies);
+                this.applyYtDlp(ytdlp);
+            } catch (error) {
+                this.generation.failed = true;
+                this.toast("error", error.message);
+            }
+        },
+
+        /**
+         * Run one of the dialog's actions, showing its error as a toast.
+         * @param {"model" | "cookies" | "ytdlp"} action
+         * @param {() => Promise<string>} run returns the success message
+         */
+        async runGenerationAction(action, run) {
+            this.generation.busy = action;
+            try {
+                this.toast("success", await run());
+            } catch (error) {
+                this.toast("error", error.message);
+            } finally {
+                this.generation.busy = "";
+            }
+        },
+
+        saveModel() {
+            if (!this.canSaveModel) return;
+            return this.runGenerationAction("model", async () => {
+                this.applySettings(
+                    await this.api("/api/admin/settings", {
+                        method: "PUT",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ transcribe_model: this.generation.model.trim() }),
+                    }),
+                );
+                return this.t("generation.modelSaved");
+            });
+        },
+
+        saveCookies() {
+            if (!this.generation.cookiesText.trim() || this.generation.busy !== "") return;
+            return this.runGenerationAction("cookies", async () => {
+                this.applyCookies(
+                    await this.api("/api/admin/cookies", {
+                        method: "PUT",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ cookies: this.generation.cookiesText }),
+                    }),
+                );
+                // the cookies are secrets: don't keep them in the page once they are saved
+                this.generation.cookiesText = "";
+                return this.t("generation.cookiesSaved");
+            });
+        },
+
+        clearCookies() {
+            return this.runGenerationAction("cookies", async () => {
+                this.applyCookies(await this.api("/api/admin/cookies", { method: "DELETE" }));
+                return this.t("generation.cookiesCleared");
+            });
+        },
+
+        updateYtDlp() {
+            return this.runGenerationAction("ytdlp", async () => {
+                this.applyYtDlp(await this.api("/api/admin/yt-dlp/update", { method: "POST" }));
+                return this.t("generation.ytdlpUpdated");
+            });
         },
 
         // ---- misc ----
