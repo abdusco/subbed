@@ -1,5 +1,5 @@
 import { resolveLanguage, translate } from "./i18n.js";
-import { cuesAt, parseSubtitles, renderCues, urlFromLocation, videoIdFromUrl } from "./subtitles.js";
+import { cuesAt, languageFromLocation, parseSubtitles, renderCues, urlFromLocation, videoIdFromUrl } from "./subtitles.js";
 
 /** @typedef {import("./subtitles.js").Cue} Cue */
 /** @typedef {{ id: string, language: string, label: string, cues: Cue[] }} Track */
@@ -162,7 +162,7 @@ document.addEventListener("alpine:init", () => {
         /** Load whatever video the address bar names, or show the start page. */
         route() {
             const url = urlFromLocation(location.pathname + location.search);
-            if (url) this.loadVideo(url, { updateHistory: false });
+            if (url) this.loadVideo(url, { updateHistory: false, language: languageFromLocation(location.pathname + location.search) });
             else this.reset();
         },
 
@@ -231,9 +231,9 @@ document.addEventListener("alpine:init", () => {
         /**
          * Fetch the library entry for a video, then start the player.
          * @param {string} raw a YouTube URL or video id
-         * @param {{ updateHistory: boolean }} options
+         * @param {{ updateHistory: boolean, language?: string }} options language is the subtitle language a link asked for
          */
-        async loadVideo(raw, { updateHistory }) {
+        async loadVideo(raw, { updateHistory, language = "" }) {
             const id = videoIdFromUrl(raw);
             this.error = null;
             if (!id) {
@@ -255,7 +255,7 @@ document.addEventListener("alpine:init", () => {
                 const data = response.ok ? await response.json() : { video: { title: "" }, subtitles: [] };
                 this.title = data.video.title;
                 this.tracks = this.buildTracks(data.subtitles);
-                this.trackId = this.pickTrack();
+                this.trackId = this.pickTrack(language);
                 this.videoId = id;
                 document.title = this.title ? `${this.title} – subbed` : "subbed";
                 await this.$nextTick();
@@ -298,8 +298,14 @@ document.addEventListener("alpine:init", () => {
                 });
         },
 
-        /** Prefer the language chosen last time, else the first track. */
-        pickTrack() {
+        /**
+         * Prefer the language the link asked for (without saving it as the preference), then the one chosen last time,
+         * else the first track.
+         * @param {string} [requested]
+         */
+        pickTrack(requested = "") {
+            const asked = requested && this.tracks.find((track) => track.language.toLowerCase() === requested);
+            if (asked) return asked.id;
             const saved = storage.get(STORAGE_KEYS.subtitleLanguage);
             if (saved === OFF) return OFF;
             return (this.tracks.find((track) => track.language === saved) ?? this.tracks[0])?.id ?? OFF;

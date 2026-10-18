@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
     cuesAt,
+    languageFromLocation,
     parseSubtitles,
     parseTimestamp,
     renderCue,
@@ -79,4 +80,13 @@ test("videoIdFromUrl and urlFromLocation", () => {
     assert.equal(urlFromLocation("/https://youtu.be/abc"), "https://youtu.be/abc");
     assert.equal(urlFromLocation("/"), "");
     assert.equal(urlFromLocation("/something"), "");
+});
+
+test("languageFromLocation reads lang from the embedded URL's query", () => {
+    assert.equal(languageFromLocation("/https://www.youtube.com/watch?v=dQw4w9WgXcQ&lang=tr"), "tr");
+    assert.equal(languageFromLocation("/https:/youtu.be/dQw4w9WgXcQ?lang=PT-br"), "pt-br");
+    assert.equal(languageFromLocation("/https://www.youtube.com/watch?v=dQw4w9WgXcQ"), "");
+    assert.equal(languageFromLocation("/https://www.youtube.com/watch?v=dQw4w9WgXcQ&lang="), "");
+    assert.equal(languageFromLocation("/"), "");
+    assert.equal(videoIdFromUrl("https://www.youtube.com/watch?v=dQw4w9WgXcQ&lang=tr"), "dQw4w9WgXcQ");
 });

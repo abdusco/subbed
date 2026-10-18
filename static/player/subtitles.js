@@ -148,3 +148,16 @@ export function urlFromLocation(pathAndSearch) {
     const rest = pathAndSearch.replace(/^\/+/, "").trim();
     return /^https?:/i.test(rest) ? rest.replace(/^(https?):\/*/i, "$1://") : "";
 }
+
+/**
+ * The subtitle language a link asks for, e.g. /https://youtu.be/<id>?lang=tr. It is part of the embedded URL's query.
+ * @param {string} pathAndSearch location.pathname + location.search
+ * @returns {string} the lowercase language code, or "" if the link names none
+ */
+export function languageFromLocation(pathAndSearch) {
+    try {
+        return (new URL(urlFromLocation(pathAndSearch)).searchParams.get("lang") ?? "").trim().toLowerCase();
+    } catch {
+        return "";
+    }
+}

@@ -102,7 +102,7 @@ Open the player and paste a YouTube link, or go straight to it:
 http://localhost:3000/https://www.youtube.com/watch?v=VIDEO_ID
 ```
 
-Share that link with anyone who can reach your server.
+Share that link with anyone who can reach your server. Add `&lang=tr` to open it with the Turkish subtitles selected (any language code you have a subtitle for). If the video has no subtitle in that language, the player picks as usual. The link doesn't change the viewer's saved choice.
 
 Below the video you can:
 
