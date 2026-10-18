@@ -2,10 +2,11 @@ package youtube
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestOEmbedClientFetch(t *testing.T) {
@@ -27,9 +28,9 @@ func TestOEmbedClientFetch(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.Method != http.MethodGet || r.URL.Query().Get("format") != "json" || r.URL.Query().Get("url") != "https://www.youtube.com/watch?v=jNQXAC9IVRw" {
-					t.Errorf("unexpected request: %s %s", r.Method, r.URL)
-				}
+				assert.Equal(t, http.MethodGet, r.Method)
+				assert.Equal(t, "json", r.URL.Query().Get("format"))
+				assert.Equal(t, "https://www.youtube.com/watch?v=jNQXAC9IVRw", r.URL.Query().Get("url"))
 				w.WriteHeader(tc.status)
 				w.Write([]byte(tc.body))
 			}))
@@ -37,12 +38,8 @@ func TestOEmbedClientFetch(t *testing.T) {
 
 			client := NewOEmbedClient(upstream.Client(), upstream.URL)
 			got, err := client.Fetch(context.Background(), "jNQXAC9IVRw")
-			if !errors.Is(err, tc.err) {
-				t.Fatalf("error = %v, want %v", err, tc.err)
-			}
-			if got != tc.want {
-				t.Errorf("result = %+v, want %+v", got, tc.want)
-			}
+			assert.ErrorIs(t, err, tc.err)
+			assert.Equal(t, tc.want, got)
 		})
 	}
 }
@@ -57,15 +54,12 @@ func TestOEmbedClientFetchCanceled(t *testing.T) {
 	cancel()
 	client := NewOEmbedClient(upstream.Client(), upstream.URL)
 	_, err := client.Fetch(ctx, "jNQXAC9IVRw")
-	if !errors.Is(err, context.Canceled) || !errors.Is(err, ErrUnreachable) {
-		t.Fatalf("error = %v, want cancellation and unreachable errors", err)
-	}
+	assert.ErrorIs(t, err, context.Canceled)
+	assert.ErrorIs(t, err, ErrUnreachable)
 }
 
 func TestValidVideoID(t *testing.T) {
 	for id, want := range map[string]bool{"jNQXAC9IVRw": true, "a46Xp8FtWOg": true, "short": false, "has space!!": false, "": false} {
-		if got := ValidVideoID(id); got != want {
-			t.Errorf("ValidVideoID(%q) = %v, want %v", id, got, want)
-		}
+		assert.Equal(t, want, ValidVideoID(id), "%q", id)
 	}
 }
