@@ -17,6 +17,8 @@ const DEFAULT_SIZE_INDEX = 2;
 const DELAY_STEP_SECONDS = 0.5;
 const DELAY_LIMIT_SECONDS = 30;
 const SYNC_INTERVAL_MS = 100;
+// how many sync ticks pass between checks that YouTube's own captions are still off (every 0.5 s)
+const CAPTION_CHECK_EVERY_TICKS = 5;
 const OFF = "off";
 
 const storage = {
@@ -49,6 +51,8 @@ const storage = {
 /** @type {any} */
 let player = null;
 let syncTimer = 0;
+/** true while library subtitles are shown instead of YouTube's own captions */
+let suppressYoutubeCaptions = false;
 /** @type {Cue | null} */
 let shownCue = null;
 /** @type {Promise<void> | null} */
@@ -74,6 +78,21 @@ function loadYoutubeApi() {
         document.head.appendChild(script);
     });
     return youtubeApi;
+}
+
+/**
+ * Turn off YouTube's built-in captions while the library subtitles are in use. Safe to call repeatedly.
+ * setOption switches off a caption track that is already showing; unloadModule stops the module from loading more.
+ */
+function hideYoutubeCaptions() {
+    if (!suppressYoutubeCaptions || !player) return;
+    try {
+        if (player.getOptions?.().includes("captions")) player.setOption("captions", "track", {});
+        player.unloadModule("captions");
+        player.unloadModule("cc");
+    } catch {
+        // the module may not exist yet
+    }
 }
 
 /**
@@ -287,9 +306,13 @@ document.addEventListener("alpine:init", () => {
             return new Promise((resolve) => {
                 // YT.Player replaces its target element, so every start gets a fresh one
                 this.$refs.mount.innerHTML = '<div id="yt-player"></div>';
+                suppressYoutubeCaptions = !withYoutubeCaptions;
                 // @ts-ignore
                 player = new YT.Player("yt-player", {
                     videoId: id,
+                    // privacy-enhanced host: it ignores the viewer's YouTube account and the caption choices remembered
+                    // for youtube.com embeds, which would otherwise switch YouTube's captions on over ours
+                    host: "https://www.youtube-nocookie.com",
                     playerVars: {
                         controls: 1,
                         autoplay: 0,
@@ -301,21 +324,17 @@ document.addEventListener("alpine:init", () => {
                         ...(withYoutubeCaptions && { cc_load_policy: 1, cc_lang_pref: this.lang }),
                     },
                     events: {
-                        onReady: (/** @type {any} */ event) => {
-                            if (!withYoutubeCaptions) {
-                                try {
-                                    event.target.unloadModule("captions");
-                                    event.target.unloadModule("cc");
-                                } catch {
-                                    // the modules may not exist
-                                }
-                            }
+                        onReady: () => {
+                            hideYoutubeCaptions();
                             resolve();
                         },
+                        // the captions module loads lazily, so react when a module loads and on every state change
+                        onApiChange: () => hideYoutubeCaptions(),
                         onStateChange: (/** @type {any} */ event) => {
                             // @ts-ignore
                             if (event.data === YT.PlayerState.PLAYING) this.startSync();
                             else this.stopSync();
+                            hideYoutubeCaptions();
                             this.tick();
                         },
                     },
@@ -327,6 +346,7 @@ document.addEventListener("alpine:init", () => {
             this.stopSync();
             player?.destroy?.();
             player = null;
+            suppressYoutubeCaptions = false;
             shownCue = null;
             this.cueHtml = "";
             if (this.$refs.mount) this.$refs.mount.innerHTML = "";
@@ -340,7 +360,12 @@ document.addEventListener("alpine:init", () => {
 
         startSync() {
             this.stopSync();
-            syncTimer = window.setInterval(() => this.tick(), SYNC_INTERVAL_MS);
+            let ticks = 0;
+            syncTimer = window.setInterval(() => {
+                this.tick();
+                // a captions track can still appear later (e.g. the viewer presses CC), so keep checking
+                if (++ticks % CAPTION_CHECK_EVERY_TICKS === 0) hideYoutubeCaptions();
+            }, SYNC_INTERVAL_MS);
         },
 
         stopSync() {
