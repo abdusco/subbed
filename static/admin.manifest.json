@@ -1,0 +1,19 @@
+{
+    "id": "/admin",
+    "name": "Subbed Admin",
+    "short_name": "Subbed",
+    "description": "Manage videos and subtitles for Subbed.",
+    "start_url": "/admin",
+    "scope": "/admin",
+    "display": "standalone",
+    "orientation": "any",
+    "theme_color": "#0e0d14",
+    "background_color": "#0e0d14",
+    "icons": [
+        { "src": "/static/admin/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+        { "src": "/static/admin/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+        { "src": "/static/admin/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+        { "src": "/static/admin/icon-1024.png", "sizes": "1024x1024", "type": "image/png", "purpose": "any" },
+        { "src": "/static/admin/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+    ]
+}
