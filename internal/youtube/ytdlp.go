@@ -258,10 +258,13 @@ func (y *YtDlp) DownloadAudio(ctx context.Context, videoURL, directory, cookiesF
 		"--output", filepath.Join(directory, "%(id)s.%(ext)s"),
 		"--no-simulate", "--print", "after_move:filepath",
 	}
-	// YouTube needs a JavaScript runtime; yt-dlp only looks for deno by default
+	// YouTube needs a JavaScript runtime (yt-dlp only looks for deno by default) and a script that solves its
+	// challenges. The standalone builds include the script; a pip install doesn't, so yt-dlp may fetch it from
+	// GitHub, as it recommends itself.
 	if _, err := y.lookPath("node"); err == nil {
 		arguments = append(arguments, "--js-runtimes", "node")
 	}
+	arguments = append(arguments, "--remote-components", "ejs:github")
 	if cookiesFile != "" {
 		arguments = append(arguments, "--cookies", cookiesFile)
 	}
