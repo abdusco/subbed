@@ -68,112 +68,77 @@ func (r *Repository) Close() error {
 	return nil
 }
 
+// schema creates every table. There are no migrations: while subbed is a prototype, a changed table
+// means starting from a fresh database.
+const schema = `
+CREATE TABLE IF NOT EXISTS videos (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	original_url TEXT NOT NULL UNIQUE,
+	title TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS subtitles (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	video_id INTEGER NOT NULL,
+	language TEXT NOT NULL,
+	type TEXT NOT NULL,
+	content TEXT NOT NULL,
+	UNIQUE (video_id, language),
+	FOREIGN KEY (video_id) REFERENCES videos(id) ON DELETE CASCADE
+);
+
+-- browser cookies for yt-dlp
+CREATE TABLE IF NOT EXISTS cookies (
+	domain TEXT NOT NULL,
+	key TEXT NOT NULL,
+	value TEXT NOT NULL,
+	path TEXT NOT NULL DEFAULT '/',
+	secure INTEGER NOT NULL DEFAULT 0,
+	http_only INTEGER NOT NULL DEFAULT 0,
+	expires INTEGER NOT NULL DEFAULT 0,
+	PRIMARY KEY (domain, key)
+);
+
+-- transcribe and translate jobs, and what they logged
+CREATE TABLE IF NOT EXISTS jobs (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	video_id INTEGER NOT NULL,
+	kind TEXT NOT NULL,
+	status TEXT NOT NULL,
+	languages TEXT NOT NULL,
+	source_language TEXT NOT NULL DEFAULT '',
+	error TEXT NOT NULL DEFAULT '',
+	created_at INTEGER NOT NULL,
+	updated_at INTEGER NOT NULL,
+	FOREIGN KEY (video_id) REFERENCES videos(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS job_logs (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	job_id INTEGER NOT NULL,
+	at INTEGER NOT NULL,
+	level TEXT NOT NULL,
+	message TEXT NOT NULL,
+	FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS job_logs_job ON job_logs (job_id, id);
+
+-- settings that the admin can change
+CREATE TABLE IF NOT EXISTS settings (
+	key TEXT PRIMARY KEY,
+	value TEXT NOT NULL
+);
+`
+
 // initDB creates the database tables if they don't exist
 func (r *Repository) initDB() error {
 	sqlDB, ok := r.db.Db.(*sql.DB)
 	if !ok {
 		return fmt.Errorf("failed to get sql.DB instance")
 	}
-
-	// Create videos table
-	_, err := sqlDB.Exec(`
-		CREATE TABLE IF NOT EXISTS videos (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			original_url TEXT NOT NULL UNIQUE,
-			title TEXT NOT NULL
-		)
-	`)
-	if err != nil {
-		return fmt.Errorf("failed to create videos table: %w", err)
+	if _, err := sqlDB.Exec(schema); err != nil {
+		return fmt.Errorf("failed to create tables: %w", err)
 	}
-
-	// Create subtitles table
-	_, err = sqlDB.Exec(`
-		CREATE TABLE IF NOT EXISTS subtitles (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			video_id INTEGER NOT NULL,
-			language TEXT NOT NULL,
-			type TEXT NOT NULL,
-			content TEXT NOT NULL,
-			FOREIGN KEY (video_id) REFERENCES videos(id) ON DELETE CASCADE
-		)
-	`)
-	if err != nil {
-		return fmt.Errorf("failed to create subtitles table: %w", err)
-	}
-
-	// Older databases can hold several subtitles per video and language. Keep the newest, then enforce uniqueness.
-	_, err = sqlDB.Exec(`
-		DELETE FROM subtitles
-		WHERE id NOT IN (SELECT MAX(id) FROM subtitles GROUP BY video_id, language)
-	`)
-	if err != nil {
-		return fmt.Errorf("failed to remove duplicate subtitles: %w", err)
-	}
-	_, err = sqlDB.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS subtitles_video_language ON subtitles (video_id, language)`)
-	if err != nil {
-		return fmt.Errorf("failed to create subtitles index: %w", err)
-	}
-
-	// Browser cookies for yt-dlp
-	_, err = sqlDB.Exec(`
-		CREATE TABLE IF NOT EXISTS cookies (
-			domain TEXT NOT NULL,
-			key TEXT NOT NULL,
-			value TEXT NOT NULL,
-			path TEXT NOT NULL DEFAULT '/',
-			secure INTEGER NOT NULL DEFAULT 0,
-			http_only INTEGER NOT NULL DEFAULT 0,
-			expires INTEGER NOT NULL DEFAULT 0,
-			PRIMARY KEY (domain, key)
-		)
-	`)
-	if err != nil {
-		return fmt.Errorf("failed to create cookies table: %w", err)
-	}
-
-	// Subtitle generation jobs and their logs
-	_, err = sqlDB.Exec(`
-		CREATE TABLE IF NOT EXISTS jobs (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			video_id INTEGER NOT NULL,
-			kind TEXT NOT NULL,
-			status TEXT NOT NULL,
-			languages TEXT NOT NULL,
-			source_language TEXT NOT NULL DEFAULT '',
-			error TEXT NOT NULL DEFAULT '',
-			created_at INTEGER NOT NULL,
-			updated_at INTEGER NOT NULL,
-			FOREIGN KEY (video_id) REFERENCES videos(id) ON DELETE CASCADE
-		)
-	`)
-	if err != nil {
-		return fmt.Errorf("failed to create jobs table: %w", err)
-	}
-	_, err = sqlDB.Exec(`
-		CREATE TABLE IF NOT EXISTS job_logs (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			job_id INTEGER NOT NULL,
-			at INTEGER NOT NULL,
-			level TEXT NOT NULL,
-			message TEXT NOT NULL,
-			FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE
-		)
-	`)
-	if err != nil {
-		return fmt.Errorf("failed to create job_logs table: %w", err)
-	}
-	_, err = sqlDB.Exec(`CREATE INDEX IF NOT EXISTS job_logs_job ON job_logs (job_id, id)`)
-	if err != nil {
-		return fmt.Errorf("failed to create job_logs index: %w", err)
-	}
-
-	// Settings that the admin can change
-	_, err = sqlDB.Exec(`CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)`)
-	if err != nil {
-		return fmt.Errorf("failed to create settings table: %w", err)
-	}
-
 	return nil
 }
 
