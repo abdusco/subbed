@@ -10,56 +10,16 @@
         <link rel="icon" type="image/svg+xml" href="/static/admin/icon.svg" />
         <link rel="icon" type="image/png" sizes="192x192" href="/static/admin/icon-192.png" />
         <link rel="apple-touch-icon" href="/static/admin/apple-touch-icon.png" />
+        <link rel="stylesheet" href="/static/admin/admin.css" />
         <style>
-            :root {
-                color-scheme: light dark;
-
-                --bg: light-dark(#f6f5fb, #0e0d14);
-                --surface: light-dark(#ffffff, #17151f);
-                --surface-2: light-dark(#f0eef9, #211f2c);
-                --line: light-dark(#e3e0f0, #2d2a3b);
-                --text: light-dark(#16141f, #f1eff8);
-                --muted: light-dark(#6a6780, #9d9ab3);
-                --accent: light-dark(#5b4bdb, #8b7dff);
-                --accent-strong: light-dark(#4a3bc4, #a296ff);
-                --danger: light-dark(#c8283a, #ff7083);
-                --danger-soft: light-dark(#fde8ea, #3a1d24);
-                --shadow-lg: light-dark(0 20px 50px rgb(30 20 80 / 0.18), 0 20px 50px rgb(0 0 0 / 0.6));
-                --glow: light-dark(rgb(124 108 255 / 0.28), rgb(124 108 255 / 0.22));
-                --font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
-            }
-
-            :root[data-theme="light"] {
-                color-scheme: light;
-            }
-
-            :root[data-theme="dark"] {
-                color-scheme: dark;
-            }
-
-            *,
-            *::before,
-            *::after {
-                box-sizing: border-box;
-            }
-
-            html {
-                -webkit-text-size-adjust: 100%;
-            }
-
             body {
-                margin: 0;
-                min-height: 100dvh;
                 display: grid;
                 place-items: center;
                 padding: max(24px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(24px, env(safe-area-inset-bottom))
                     max(16px, env(safe-area-inset-left));
                 background:
-                    radial-gradient(60rem 30rem at 50% -8rem, var(--glow), transparent 70%),
+                    radial-gradient(60rem 30rem at 50% -8rem, color-mix(in srgb, var(--accent) 24%, transparent), transparent 70%),
                     var(--bg);
-                color: var(--text);
-                font: 15px/1.5 var(--font);
-                -webkit-font-smoothing: antialiased;
             }
 
             main {
@@ -79,18 +39,16 @@
             .hero svg {
                 width: 96px;
                 height: 96px;
-                filter: drop-shadow(0 12px 28px var(--glow));
+                filter: drop-shadow(0 12px 28px color-mix(in srgb, var(--accent) 35%, transparent));
             }
 
             .hero h1 {
-                margin: 0;
                 font-size: 28px;
                 line-height: 1.2;
                 letter-spacing: -0.02em;
             }
 
             .hero p {
-                margin: 0;
                 color: var(--muted);
             }
 
@@ -100,90 +58,19 @@
                 padding: 24px;
                 background: var(--surface);
                 border: 1px solid var(--line);
-                border-radius: 18px;
+                border-radius: var(--radius);
                 box-shadow: var(--shadow-lg);
             }
 
-            label {
-                display: grid;
-                gap: 6px;
-                font-weight: 600;
-                font-size: 13px;
-            }
-
-            input {
-                width: 100%;
-                padding: 11px 13px;
-                font: inherit;
-                font-weight: 400;
-                color: var(--text);
-                background: var(--surface-2);
-                border: 1px solid var(--line);
-                border-radius: 10px;
-                outline: none;
-                transition:
-                    border-color 0.15s,
-                    box-shadow 0.15s;
-            }
-
-            input:focus-visible {
-                border-color: var(--accent);
-                box-shadow: 0 0 0 3px light-dark(rgb(91 75 219 / 0.2), rgb(139 125 255 / 0.28));
-            }
-
-            input[aria-invalid="true"] {
-                border-color: var(--danger);
-            }
-
-            button {
-                padding: 12px 16px;
-                font: inherit;
-                font-weight: 600;
-                color: #fff;
-                background: linear-gradient(135deg, #7c6cff, #4a38d6);
-                border: 0;
-                border-radius: 10px;
-                cursor: pointer;
-                transition:
-                    filter 0.15s,
-                    transform 0.05s;
-            }
-
-            button:hover:not(:disabled) {
-                filter: brightness(1.08);
-            }
-
-            button:active:not(:disabled) {
-                transform: translateY(1px);
-            }
-
-            button:focus-visible {
-                outline: 3px solid var(--accent-strong);
-                outline-offset: 2px;
-            }
-
-            button:disabled {
-                opacity: 0.6;
-                cursor: progress;
-            }
-
-            .error {
-                margin: 0;
+            .error-text {
                 padding: 10px 12px;
-                color: var(--danger);
                 background: var(--danger-soft);
-                border-radius: 10px;
+                border-radius: var(--radius-sm);
                 font-size: 14px;
             }
 
-            .error[hidden] {
+            .error-text[hidden] {
                 display: none;
-            }
-
-            @media (prefers-reduced-motion: reduce) {
-                * {
-                    transition: none !important;
-                }
             }
         </style>
         <script>
@@ -216,16 +103,24 @@
             </header>
 
             <form id="login" method="post" action="/api/login">
-                <label>
+                <label class="field">
                     <span data-i18n="username">Username</span>
-                    <input name="username" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" required autofocus />
+                    <input
+                        name="username"
+                        type="text"
+                        autocomplete="username"
+                        autocapitalize="none"
+                        spellcheck="false"
+                        required
+                        autofocus
+                    />
                 </label>
-                <label>
+                <label class="field">
                     <span data-i18n="password">Password</span>
                     <input name="password" type="password" autocomplete="current-password" required />
                 </label>
-                <p class="error" id="error" role="alert" hidden></p>
-                <button type="submit" data-i18n="submit">Sign in</button>
+                <p class="error-text" id="error" role="alert" hidden></p>
+                <button class="btn btn-primary" type="submit" data-i18n="submit">Sign in</button>
             </form>
         </main>
 
