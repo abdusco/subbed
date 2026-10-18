@@ -285,6 +285,114 @@ main {
     padding-left: 42px;
 }
 
+/* ---------- generation jobs ---------- */
+
+.jobs {
+    display: grid;
+    gap: 8px;
+    justify-items: start;
+    margin-bottom: 20px;
+}
+
+.jobs h2 {
+    font-size: 14px;
+    color: var(--muted);
+}
+
+.job {
+    width: 100%;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+}
+
+.job > summary {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-height: 44px;
+    padding: 0 14px;
+    cursor: pointer;
+}
+
+.job-title {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    font-weight: 600;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.job-time {
+    flex: none;
+    color: var(--muted);
+    font-size: 12.5px;
+}
+
+.job-status {
+    flex: none;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: var(--surface-2);
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.job-status.is-running {
+    background: var(--accent-soft);
+    color: var(--accent-strong);
+}
+
+.job-status.is-done {
+    background: var(--success-soft);
+    color: var(--success);
+}
+
+.job-status.is-failed {
+    background: var(--danger-soft);
+    color: var(--danger);
+}
+
+.job-detail {
+    margin: 0 14px 8px;
+}
+
+.job-log {
+    max-height: 260px;
+    margin: 0 14px 14px;
+    padding: 10px 12px;
+    overflow: auto;
+    border-radius: var(--radius-sm);
+    background: var(--surface-2);
+    font:
+        12.5px / 1.55 ui-monospace,
+        SFMono-Regular,
+        Menlo,
+        monospace;
+}
+
+.log-line {
+    display: flex;
+    gap: 10px;
+}
+
+.log-line time {
+    flex: none;
+    color: var(--muted);
+}
+
+.log-line span {
+    min-width: 0;
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+}
+
+.log-line.is-error {
+    color: var(--danger);
+}
+
 /* ---------- fields ---------- */
 
 .field {

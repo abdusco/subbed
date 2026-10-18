@@ -187,6 +187,44 @@
                 </div>
             </div>
 
+            <section class="jobs" x-show="jobs.length > 0" aria-labelledby="jobs-title">
+                <h2 id="jobs-title" x-text="t('jobs.title')"></h2>
+                <template x-for="job in visibleJobs" :key="job.id">
+                    <details class="job" @toggle="onJobToggle(job, $event)">
+                        <summary>
+                            <span class="job-status" :class="`is-${job.status}`" x-text="t(`jobs.status.${job.status}`)"></span>
+                            <span class="job-title" x-text="job.video_title"></span>
+                            <time class="job-time" :datetime="jobDate(job).toISOString()" x-text="formatJobTime(job)"></time>
+                        </summary>
+                        <p class="hint job-detail" x-text="jobSummary(job)"></p>
+                        <p class="error-text job-detail" x-show="job.error" x-text="job.error"></p>
+                        <div
+                            class="job-log"
+                            :id="`job-log-${job.id}`"
+                            role="log"
+                            tabindex="0"
+                            :aria-label="t('jobs.log', { title: job.video_title })"
+                        >
+                            <p class="hint" x-show="!(jobLogs[job.id]?.lines.length)" x-text="t('jobs.noLogs')"></p>
+                            <template x-for="line in jobLogs[job.id]?.lines ?? []" :key="line.id">
+                                <div class="log-line" :class="{ 'is-error': line.level === 'error' }">
+                                    <time x-text="formatLogTime(line)"></time>
+                                    <span x-text="line.message"></span>
+                                </div>
+                            </template>
+                        </div>
+                    </details>
+                </template>
+                <button
+                    class="btn btn-ghost btn-small"
+                    type="button"
+                    x-show="jobs.length > JOBS_SHOWN"
+                    @click="jobsExpanded = !jobsExpanded"
+                >
+                    <span x-text="jobsExpanded ? t('jobs.showFewer') : t('jobs.showOlder')"></span>
+                </button>
+            </section>
+
             <label class="search" x-show="videos.length > 0">
                 <svg class="icon"><use href="#i-search" /></svg>
                 <span class="sr-only" x-text="t('library.search')"></span>

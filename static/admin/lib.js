@@ -8,6 +8,30 @@ const VIDEO_ID_PATTERN = /^[A-Za-z0-9_-]{11}$/;
 const TIMELINE_PATTERN = /(\d{1,2}:)?\d{2}:\d{2}[,.]\d{3}\s*-->\s*(\d{1,2}:)?\d{2}:\d{2}[,.]\d{3}/;
 const LANGUAGE_PATTERN = /^[a-z]{2,3}(-[a-z0-9]{2,8})*$/;
 
+/** @typedef {{ id: number, status: "queued" | "running" | "done" | "failed" }} JobStatus */
+
+/** How many log lines the server returns per request; fewer means the reader has caught up. */
+export const LOG_PAGE_SIZE = 500;
+
+/**
+ * A job that is still going to change: waiting or running.
+ * @param {{ status: string }} job
+ * @returns {boolean}
+ */
+export function isJobActive(job) {
+    return job.status === "queued" || job.status === "running";
+}
+
+/**
+ * Whether a log has been read to its end: the job is over and the last page was not full.
+ * @param {{ status: string }} job as reported with the lines
+ * @param {number} received how many lines that answer held
+ * @returns {boolean}
+ */
+export function isLogComplete(job, received) {
+    return !isJobActive(job) && received < LOG_PAGE_SIZE;
+}
+
 /** Languages offered for generated subtitles, named in themselves. The server knows the same codes. */
 export const GENERATION_LANGUAGES = [
     { code: "ar", name: "العربية" },

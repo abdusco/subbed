@@ -1,6 +1,8 @@
 import { resolveLanguage, translate } from "./i18n.js";
 import {
     GENERATION_LANGUAGES,
+    isJobActive,
+    isLogComplete,
     knownGenerationLanguages,
     languageFromName,
     matchesQuery,
@@ -14,6 +16,13 @@ import {
 
 /** @typedef {import("./lib.js").Video} Video */
 /** @typedef {import("./lib.js").Subtitle} Subtitle */
+/**
+ * @typedef {{
+ *     id: number, video_id: number, video_title: string, status: "queued" | "running" | "done" | "failed",
+ *     languages: string[], source_language: string, error: string, created_at: number
+ * }} Job
+ */
+/** @typedef {{ id: number, at: number, level: "info" | "error", message: string }} JobLogLine */
 /** @typedef {{ id: number, kind: "success" | "error", text: string }} Toast */
 /** @typedef {"system" | "light" | "dark"} ThemePreference */
 
@@ -24,6 +33,10 @@ const STORAGE_KEYS = {
     lastTargets: "subbed-admin-last-generation-targets",
 };
 const REFRESH_MIN_INTERVAL_MS = 5000;
+const JOB_POLL_INTERVAL_MS = 2000;
+const JOBS_SHOWN = 5;
+/** a log scrolled to within this many pixels of its end keeps following new lines */
+const LOG_FOLLOW_SLACK_PX = 24;
 const TOAST_DURATION_MS = { success: 3500, error: 6000 };
 const SERVICE_WORKER_URL = "/admin-sw.js";
 const SERVICE_WORKER_SCOPE = "/admin";
@@ -131,6 +144,15 @@ document.addEventListener("alpine:init", () => {
         },
         editForm: { id: 0, url: "", original: "", title: "", busy: false },
         confirmation: { kind: /** @type {"video" | "subtitle"} */ ("video"), id: 0, label: "", busy: false },
+        JOBS_SHOWN,
+        /** @type {Job[]} */
+        jobs: [],
+        jobsExpanded: false,
+        /** the ids of the jobs whose log is open */
+        openJobs: /** @type {Record<number, boolean>} */ ({}),
+        /** what has been read of each job's log; complete once the job is over and every line is in */
+        jobLogs: /** @type {Record<number, { lines: JobLogLine[], complete: boolean }>} */ ({}),
+        jobPollTimer: 0,
         generationLanguages: GENERATION_LANGUAGES,
         generateForm: {
             videoId: 0,
@@ -179,7 +201,11 @@ document.addEventListener("alpine:init", () => {
                 this.scheduleRefresh({ force: true });
             });
             window.addEventListener("offline", () => (this.online = false));
-            document.addEventListener("visibilitychange", () => document.visibilityState === "visible" && this.scheduleRefresh());
+            document.addEventListener("visibilitychange", () => {
+                if (document.visibilityState !== "visible") return;
+                this.scheduleRefresh();
+                this.pollJobs();
+            });
             window.addEventListener("focus", () => this.scheduleRefresh());
             window.addEventListener("pageshow", (event) => event.persisted && this.scheduleRefresh());
 
@@ -201,6 +227,7 @@ document.addEventListener("alpine:init", () => {
             this.$refs.toasts.showPopover?.();
             this.registerServiceWorker();
             this.loadVideos();
+            this.loadJobs();
         },
 
         /**
@@ -724,11 +751,107 @@ document.addEventListener("alpine:init", () => {
                 storage.set(STORAGE_KEYS.lastTargets, JSON.stringify(targets));
                 this.$refs.generateDialog.close();
                 this.toast("success", this.t("generation.started"));
+                await this.loadJobs();
             } catch (error) {
                 this.toast("error", error.message);
             } finally {
                 this.generateForm.busy = false;
             }
+        },
+
+        // ---- generation jobs and their logs ----
+
+        get visibleJobs() {
+            return this.jobsExpanded ? this.jobs : this.jobs.slice(0, JOBS_SHOWN);
+        },
+
+        /** @param {Job} job */
+        jobDate(job) {
+            return new Date(job.created_at * 1000);
+        },
+
+        /** @param {Job} job */
+        formatJobTime(job) {
+            return this.jobDate(job).toLocaleString(this.lang, { dateStyle: "medium", timeStyle: "short" });
+        },
+
+        /** @param {JobLogLine} line */
+        formatLogTime(line) {
+            return new Date(line.at).toLocaleTimeString(this.lang, { hour12: false });
+        },
+
+        /** @param {Job} job */
+        jobSummary(job) {
+            if (!job.languages.length) return this.t("jobs.transcribeOnly");
+            return this.t("jobs.translateTo", { languages: job.languages.map((code) => code.toUpperCase()).join(", ") });
+        },
+
+        /**
+         * Reload the job list. A job that just finished adds subtitles, so the library is reloaded too.
+         */
+        async loadJobs() {
+            try {
+                const before = new Map(this.jobs.map((job) => [job.id, job]));
+                this.jobs = await this.api("/api/admin/jobs");
+                if (this.jobs.some((job) => !isJobActive(job) && before.has(job.id) && isJobActive(before.get(job.id)))) {
+                    this.loadVideos();
+                }
+            } catch {
+                // the next poll tries again
+            }
+            this.schedulePoll();
+        },
+
+        /**
+         * Read the log lines that came after the last one seen.
+         * @param {number} id
+         */
+        async loadJobLogs(id) {
+            if (!this.jobLogs[id]) this.jobLogs[id] = { lines: [], complete: false };
+            // read it back: the stored object is wrapped by Alpine, and only the wrapper triggers updates
+            const log = this.jobLogs[id];
+            const after = log.lines.at(-1)?.id ?? 0;
+            const { job, logs } = await this.api(`/api/admin/jobs/${id}/logs?after=${after}`);
+            const element = document.getElementById(`job-log-${id}`);
+            const following = !element || element.scrollHeight - element.scrollTop - element.clientHeight <= LOG_FOLLOW_SLACK_PX;
+            log.lines.push(...logs);
+            log.complete = isLogComplete(job, logs.length);
+            const listed = this.jobs.find((candidate) => candidate.id === id);
+            if (listed) Object.assign(listed, job);
+            if (following && logs.length) this.$nextTick(() => element && (element.scrollTop = element.scrollHeight));
+        },
+
+        /**
+         * Poll only for what someone can see changing: the jobs list while a job is going, and the log of an open
+         * job until it is complete. Nothing runs while the page is hidden.
+         */
+        schedulePoll() {
+            clearTimeout(this.jobPollTimer);
+            if (document.visibilityState !== "visible" || (!this.jobs.some(isJobActive) && !this.openIncompleteJobs().length)) return;
+            this.jobPollTimer = window.setTimeout(() => this.pollJobs(), JOB_POLL_INTERVAL_MS);
+        },
+
+        openIncompleteJobs() {
+            return this.jobs.filter((job) => this.openJobs[job.id] && !this.jobLogs[job.id]?.complete);
+        },
+
+        async pollJobs() {
+            clearTimeout(this.jobPollTimer);
+            if (document.visibilityState !== "visible") return;
+            await Promise.all([this.loadJobs(), ...this.openIncompleteJobs().map((job) => this.loadJobLogs(job.id).catch(() => {}))]);
+        },
+
+        /**
+         * Start reading a job's log when it is opened.
+         * @param {Job} job
+         * @param {Event} event
+         */
+        async onJobToggle(job, event) {
+            const open = /** @type {HTMLDetailsElement} */ (event.target).open;
+            this.openJobs[job.id] = open;
+            if (!open) return;
+            if (!this.jobLogs[job.id]?.complete) await this.loadJobLogs(job.id).catch((error) => this.toast("error", error.message));
+            this.schedulePoll();
         },
 
         // ---- subtitle generation settings ----

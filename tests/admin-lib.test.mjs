@@ -4,6 +4,9 @@ import test from "node:test";
 import { resolveLanguage, translate } from "../static/admin/i18n.js";
 import {
     GENERATION_LANGUAGES,
+    LOG_PAGE_SIZE,
+    isJobActive,
+    isLogComplete,
     knownGenerationLanguages,
     languageFromName,
     matchesQuery,
@@ -67,6 +70,18 @@ test("matchesQuery looks at title, url and languages", () => {
     assert.ok(matchesQuery(video, "YOUTU.BE"));
     assert.ok(matchesQuery(video, "tr"));
     assert.ok(!matchesQuery(video, "xyz"));
+});
+
+test("a job log is complete only when the job is over and the last page was not full", () => {
+    assert.equal(isJobActive({ status: "queued" }), true);
+    assert.equal(isJobActive({ status: "running" }), true);
+    assert.equal(isJobActive({ status: "done" }), false);
+    assert.equal(isJobActive({ status: "failed" }), false);
+
+    assert.equal(isLogComplete({ status: "running" }, 3), false);
+    assert.equal(isLogComplete({ status: "done" }, 3), true);
+    assert.equal(isLogComplete({ status: "failed" }, 0), true);
+    assert.equal(isLogComplete({ status: "done" }, LOG_PAGE_SIZE), false);
 });
 
 test("generation languages are valid subtitle codes, and a remembered choice is cleaned up", () => {
