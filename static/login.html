@@ -1,0 +1,315 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+        <title>Sign in – Subbed</title>
+        <meta name="robots" content="noindex" />
+        <meta name="theme-color" content="#f6f5fb" media="(prefers-color-scheme: light)" />
+        <meta name="theme-color" content="#0e0d14" media="(prefers-color-scheme: dark)" />
+        <link rel="icon" type="image/svg+xml" href="/static/admin/icon.svg" />
+        <link rel="icon" type="image/png" sizes="192x192" href="/static/admin/icon-192.png" />
+        <link rel="apple-touch-icon" href="/static/admin/apple-touch-icon.png" />
+        <style>
+            :root {
+                color-scheme: light dark;
+
+                --bg: light-dark(#f6f5fb, #0e0d14);
+                --surface: light-dark(#ffffff, #17151f);
+                --surface-2: light-dark(#f0eef9, #211f2c);
+                --line: light-dark(#e3e0f0, #2d2a3b);
+                --text: light-dark(#16141f, #f1eff8);
+                --muted: light-dark(#6a6780, #9d9ab3);
+                --accent: light-dark(#5b4bdb, #8b7dff);
+                --accent-strong: light-dark(#4a3bc4, #a296ff);
+                --danger: light-dark(#c8283a, #ff7083);
+                --danger-soft: light-dark(#fde8ea, #3a1d24);
+                --shadow-lg: light-dark(0 20px 50px rgb(30 20 80 / 0.18), 0 20px 50px rgb(0 0 0 / 0.6));
+                --glow: light-dark(rgb(124 108 255 / 0.28), rgb(124 108 255 / 0.22));
+                --font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+            }
+
+            :root[data-theme="light"] {
+                color-scheme: light;
+            }
+
+            :root[data-theme="dark"] {
+                color-scheme: dark;
+            }
+
+            *,
+            *::before,
+            *::after {
+                box-sizing: border-box;
+            }
+
+            html {
+                -webkit-text-size-adjust: 100%;
+            }
+
+            body {
+                margin: 0;
+                min-height: 100dvh;
+                display: grid;
+                place-items: center;
+                padding: max(24px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(24px, env(safe-area-inset-bottom))
+                    max(16px, env(safe-area-inset-left));
+                background:
+                    radial-gradient(60rem 30rem at 50% -8rem, var(--glow), transparent 70%),
+                    var(--bg);
+                color: var(--text);
+                font: 15px/1.5 var(--font);
+                -webkit-font-smoothing: antialiased;
+            }
+
+            main {
+                width: 100%;
+                max-width: 400px;
+                display: grid;
+                gap: 28px;
+            }
+
+            .hero {
+                display: grid;
+                justify-items: center;
+                gap: 14px;
+                text-align: center;
+            }
+
+            .hero svg {
+                width: 96px;
+                height: 96px;
+                filter: drop-shadow(0 12px 28px var(--glow));
+            }
+
+            .hero h1 {
+                margin: 0;
+                font-size: 28px;
+                line-height: 1.2;
+                letter-spacing: -0.02em;
+            }
+
+            .hero p {
+                margin: 0;
+                color: var(--muted);
+            }
+
+            form {
+                display: grid;
+                gap: 16px;
+                padding: 24px;
+                background: var(--surface);
+                border: 1px solid var(--line);
+                border-radius: 18px;
+                box-shadow: var(--shadow-lg);
+            }
+
+            label {
+                display: grid;
+                gap: 6px;
+                font-weight: 600;
+                font-size: 13px;
+            }
+
+            input {
+                width: 100%;
+                padding: 11px 13px;
+                font: inherit;
+                font-weight: 400;
+                color: var(--text);
+                background: var(--surface-2);
+                border: 1px solid var(--line);
+                border-radius: 10px;
+                outline: none;
+                transition:
+                    border-color 0.15s,
+                    box-shadow 0.15s;
+            }
+
+            input:focus-visible {
+                border-color: var(--accent);
+                box-shadow: 0 0 0 3px light-dark(rgb(91 75 219 / 0.2), rgb(139 125 255 / 0.28));
+            }
+
+            input[aria-invalid="true"] {
+                border-color: var(--danger);
+            }
+
+            button {
+                padding: 12px 16px;
+                font: inherit;
+                font-weight: 600;
+                color: #fff;
+                background: linear-gradient(135deg, #7c6cff, #4a38d6);
+                border: 0;
+                border-radius: 10px;
+                cursor: pointer;
+                transition:
+                    filter 0.15s,
+                    transform 0.05s;
+            }
+
+            button:hover:not(:disabled) {
+                filter: brightness(1.08);
+            }
+
+            button:active:not(:disabled) {
+                transform: translateY(1px);
+            }
+
+            button:focus-visible {
+                outline: 3px solid var(--accent-strong);
+                outline-offset: 2px;
+            }
+
+            button:disabled {
+                opacity: 0.6;
+                cursor: progress;
+            }
+
+            .error {
+                margin: 0;
+                padding: 10px 12px;
+                color: var(--danger);
+                background: var(--danger-soft);
+                border-radius: 10px;
+                font-size: 14px;
+            }
+
+            .error[hidden] {
+                display: none;
+            }
+
+            @media (prefers-reduced-motion: reduce) {
+                * {
+                    transition: none !important;
+                }
+            }
+        </style>
+        <script>
+            // apply the saved appearance before first paint (same key as the admin page)
+            try {
+                const theme = localStorage.getItem("subbed-admin-theme");
+                if (theme === "light" || theme === "dark") document.documentElement.dataset.theme = theme;
+            } catch {}
+        </script>
+    </head>
+    <body>
+        <main>
+            <header class="hero">
+                <svg viewBox="0 0 512 512" role="img" aria-label="Subbed">
+                    <defs>
+                        <linearGradient id="logo-bg" x1="0" y1="0" x2="1" y2="1">
+                            <stop offset="0" stop-color="#7c6cff" />
+                            <stop offset="1" stop-color="#4a38d6" />
+                        </linearGradient>
+                    </defs>
+                    <rect width="512" height="512" rx="112" fill="url(#logo-bg)" />
+                    <path d="M222 148v128l106-64z" fill="#fff" />
+                    <rect x="146" y="318" width="220" height="28" rx="14" fill="#fff" />
+                    <rect x="186" y="364" width="140" height="28" rx="14" fill="#fff" fill-opacity=".72" />
+                </svg>
+                <div>
+                    <h1>Subbed</h1>
+                    <p data-i18n="subtitle">Sign in to manage your videos</p>
+                </div>
+            </header>
+
+            <form id="login" method="post" action="/api/login">
+                <label>
+                    <span data-i18n="username">Username</span>
+                    <input name="username" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" required autofocus />
+                </label>
+                <label>
+                    <span data-i18n="password">Password</span>
+                    <input name="password" type="password" autocomplete="current-password" required />
+                </label>
+                <p class="error" id="error" role="alert" hidden></p>
+                <button type="submit" data-i18n="submit">Sign in</button>
+            </form>
+        </main>
+
+        <script>
+            const MESSAGES = {
+                en: {
+                    subtitle: "Sign in to manage your videos",
+                    username: "Username",
+                    password: "Password",
+                    submit: "Sign in",
+                    submitting: "Signing in…",
+                    invalid: "Wrong username or password.",
+                    tooMany: "Too many attempts. Wait a moment and try again.",
+                    failed: "Couldn't sign in. Check your connection and try again.",
+                },
+                tr: {
+                    subtitle: "Videolarını yönetmek için giriş yap",
+                    username: "Kullanıcı adı",
+                    password: "Parola",
+                    submit: "Giriş yap",
+                    submitting: "Giriş yapılıyor…",
+                    invalid: "Kullanıcı adı veya parola yanlış.",
+                    tooMany: "Çok fazla deneme. Biraz bekleyip tekrar dene.",
+                    failed: "Giriş yapılamadı. Bağlantını kontrol edip tekrar dene.",
+                },
+            };
+
+            /** @returns {"en" | "tr"} the saved admin language, else the browser's */
+            function pickLanguage() {
+                let saved = null;
+                try {
+                    saved = localStorage.getItem("subbed-admin-language");
+                } catch {}
+                const language = saved ?? navigator.language ?? "en";
+                return language.toLowerCase().startsWith("tr") ? "tr" : "en";
+            }
+
+            const language = pickLanguage();
+            const text = MESSAGES[language];
+            document.documentElement.lang = language;
+            for (const element of document.querySelectorAll("[data-i18n]")) {
+                element.textContent = text[element.dataset.i18n];
+            }
+
+            const form = document.getElementById("login");
+            const errorBox = document.getElementById("error");
+            const button = form.querySelector("button");
+            const inputs = [...form.querySelectorAll("input")];
+
+            /** @param {string} message */
+            function showError(message) {
+                errorBox.textContent = message;
+                errorBox.hidden = false;
+                for (const input of inputs) input.setAttribute("aria-invalid", "true");
+            }
+
+            form.addEventListener("submit", async (event) => {
+                event.preventDefault();
+                errorBox.hidden = true;
+                for (const input of inputs) input.removeAttribute("aria-invalid");
+                button.disabled = true;
+                button.textContent = text.submitting;
+                try {
+                    const data = new FormData(form);
+                    const response = await fetch("/api/login", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ username: data.get("username"), password: data.get("password") }),
+                    });
+                    if (response.ok) {
+                        location.replace("/admin");
+                        return;
+                    }
+                    showError(response.status === 401 ? text.invalid : response.status === 429 ? text.tooMany : text.failed);
+                    if (response.status === 401) {
+                        form.elements.password.value = "";
+                        form.elements.password.focus();
+                    }
+                } catch {
+                    showError(text.failed);
+                }
+                button.disabled = false;
+                button.textContent = text.submit;
+            });
+        </script>
+    </body>
+</html>
