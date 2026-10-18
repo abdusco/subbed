@@ -1,10 +1,10 @@
-# Subbed
+# subbed
 
 Watch YouTube videos with your own subtitles.
 
-You add a video and upload subtitle files for it (SRT or VTT). When you open the video in Subbed, the subtitles show on top of the player, in sync. A video can have subtitles in several languages, and you pick which one to show.
+You add a video and upload subtitle files for it (SRT or VTT). When you open the video in subbed, the subtitles show on top of the player, in sync. A video can have subtitles in several languages, and you pick which one to show.
 
-Subbed is a small self-hosted app: one container, no external services except YouTube itself.
+subbed is a small self-hosted app: one container, no external services except YouTube itself.
 
 ## Quick start
 
@@ -53,7 +53,7 @@ Run it with `docker compose up -d`.
 
 To update, pull the new image and recreate the container (`docker pull ghcr.io/abdusco/subbed:latest`, then `docker compose up -d` or re-run the `docker run` command).
 
-## Using Subbed
+## Using subbed
 
 ### Add a video and its subtitles
 
@@ -119,14 +119,14 @@ Set these as environment variables.
 
 ## Keeping it safe
 
-- **Choose a real admin password.** `admin:admin` is only for trying Subbed out.
-- **Use HTTPS if it's reachable from the internet.** The admin password is sent when you sign in, so put Subbed behind a reverse proxy that provides HTTPS (Caddy, Traefik or nginx). The sign-in cookie is marked `Secure` when the proxy sends `X-Forwarded-Proto: https`.
+- **Choose a real admin password.** `admin:admin` is only for trying subbed out.
+- **Use HTTPS if it's reachable from the internet.** The admin password is sent when you sign in, so put subbed behind a reverse proxy that provides HTTPS (Caddy, Traefik or nginx). The sign-in cookie is marked `Secure` when the proxy sends `X-Forwarded-Proto: https`.
 - **Set `SESSION_SECRET` for sign-ins that survive restarts.** Use a long random value, for example `openssl rand -hex 32`. Changing it signs everyone out. Failed sign-ins are rate limited per client. The admin page can only be installed as an app over HTTPS, apart from `localhost`.
 - **The player is public.** Anyone who can reach the server can watch any video you added. Adding, changing or deleting videos and subtitles requires the admin login.
 
 ## For developers
 
-Subbed is a Go ([Echo](https://echo.labstack.com)) server with a SQLite database and a plain HTML, CSS and JavaScript frontend using [Alpine.js](https://alpinejs.dev). The frontend files in `static/` are embedded into the binary.
+subbed is a Go ([Echo](https://echo.labstack.com)) server with a SQLite database and a plain HTML, CSS and JavaScript frontend using [Alpine.js](https://alpinejs.dev). The frontend files in `static/` are embedded into the binary.
 
 ```bash
 # run locally; web files are served from ./static, so edits show on reload

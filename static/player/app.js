@@ -174,7 +174,7 @@ document.addEventListener("alpine:init", () => {
             this.trackId = OFF;
             this.error = null;
             this.loading = false;
-            document.title = "Subbed";
+            document.title = "subbed";
         },
 
         // ---- i18n and theme ----
@@ -257,7 +257,7 @@ document.addEventListener("alpine:init", () => {
                 this.tracks = this.buildTracks(data.subtitles);
                 this.trackId = this.pickTrack();
                 this.videoId = id;
-                document.title = this.title ? `${this.title} – Subbed` : "Subbed";
+                document.title = this.title ? `${this.title} – subbed` : "subbed";
                 await this.$nextTick();
                 await loadYoutubeApi();
                 await this.startPlayer(id, this.tracks.length === 0);

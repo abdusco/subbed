@@ -1,8 +1,8 @@
 {
     "id": "/admin",
-    "name": "Subbed Admin",
-    "short_name": "Subbed",
-    "description": "Manage videos and subtitles for Subbed.",
+    "name": "subbed Admin",
+    "short_name": "subbed",
+    "description": "Manage videos and subtitles for subbed.",
     "start_url": "/admin",
     "scope": "/admin",
     "display": "standalone",

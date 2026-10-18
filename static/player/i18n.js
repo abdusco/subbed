@@ -5,7 +5,7 @@ export const LANGUAGES = /** @type {const} */ (["en", "tr"]);
 /** @type {Record<Language, Record<string, string>>} */
 export const messages = {
     en: {
-        "nav.home": "Subbed home",
+        "nav.home": "subbed home",
         "hero.title": "YouTube with your own subtitles",
         "hero.hint": "Paste a YouTube link. If the library has subtitles for it, they appear on top of the video.",
         "url.label": "YouTube link",
@@ -38,7 +38,7 @@ export const messages = {
         "theme.dark": "Dark",
     },
     tr: {
-        "nav.home": "Subbed ana sayfa",
+        "nav.home": "subbed ana sayfa",
         "hero.title": "Kendi altyazılarınla YouTube",
         "hero.hint": "Bir YouTube bağlantısı yapıştır. Kütüphanede altyazısı varsa videonun üzerinde görünür.",
         "url.label": "YouTube bağlantısı",
