@@ -78,13 +78,22 @@ export function renderCue(lines) {
     return lines.map(renderLine).join("<br>");
 }
 
+// a line that starts with a dash is one speaker's turn in a dialogue
+const DIALOGUE_LINE = /^[-–—]\s*/;
+
 /**
- * Render the cues showing at once, one below the other.
+ * Render the cues showing at once, one block per cue. Dialogue cues (every line starts with a dash) get a `dialogue`
+ * class so the lines can be left-aligned and their dashes line up.
  * @param {Cue[]} cues
  * @returns {string}
  */
 export function renderCues(cues) {
-    return cues.map((cue) => renderCue(cue.lines)).join("<br>");
+    return cues
+        .map((cue) => {
+            const dialogue = cue.lines.length > 1 && cue.lines.every((line) => DIALOGUE_LINE.test(line));
+            return `<div class="cue${dialogue ? " dialogue" : ""}">${renderCue(cue.lines)}</div>`;
+        })
+        .join("");
 }
 
 /**

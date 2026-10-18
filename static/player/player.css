@@ -437,6 +437,19 @@ main {
     display: none;
 }
 
+/* simultaneous cues (e.g. two speakers) stack with a small gap */
+.subtitle .cue + .cue {
+    margin-top: 0.3em;
+}
+
+/* a dialogue cue is a centered block with left-aligned lines, so the dashes line up */
+.subtitle .cue.dialogue {
+    width: fit-content;
+    margin-inline: auto;
+    text-align: left;
+    text-wrap: wrap;
+}
+
 /* ---------- toolbar ---------- */
 
 .toolbar {

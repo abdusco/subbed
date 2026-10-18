@@ -52,7 +52,11 @@ test("cuesAt finds every showing cue in start order, and none in gaps", () => {
 
 test("renderCues stacks overlapping cues, keeping each cue's line breaks", () => {
     const cues = parseSubtitles("1\n00:00:01,000 --> 00:00:03,000\n- Hi\n- Hello\n\n2\n00:00:02,000 --> 00:00:04,000\nWait\n");
-    assert.equal(renderCues(cuesAt(cues, 2.5)), "- Hi<br>- Hello<br>Wait");
+    assert.equal(
+        renderCues(cuesAt(cues, 2.5)),
+        '<div class="cue dialogue">- Hi<br>- Hello</div><div class="cue">Wait</div>',
+        "only the all-dashes cue is marked as dialogue",
+    );
 });
 
 test("renderCue escapes HTML and restores formatting", () => {
