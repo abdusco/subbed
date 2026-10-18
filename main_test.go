@@ -47,7 +47,7 @@ func newTestAppWith(t *testing.T, oembedURL string) *testApp {
 	}
 	logs := &bytes.Buffer{}
 	logger := slog.New(slog.NewJSONHandler(logs, nil))
-	e := newServer(serverConfig{repo: repo, assets: assets, creds: testCreds, logger: logger, oembedURL: oembedURL})
+	e := newServer(serverConfig{repo: repo, assets: assets, creds: testCreds, logger: logger, oembed: NewYoutubeOEmbed(nil, oembedURL)})
 	return &testApp{t: t, handler: e, logs: logs}
 }
 
@@ -343,7 +343,7 @@ func TestOEmbedProxy(t *testing.T) {
 	if rec.Code != 200 {
 		t.Fatalf("status %d body %q", rec.Code, rec.Body.String())
 	}
-	var result oembedResult
+	var result YoutubeOEmbedResult
 	json.Unmarshal(rec.Body.Bytes(), &result)
 	if result.Title != "Me at the zoo" || result.Author != "jawed" {
 		t.Fatalf("result = %+v", result)

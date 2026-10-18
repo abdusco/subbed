@@ -1,7 +1,6 @@
 package main
 
 import (
-	"cmp"
 	"context"
 	"crypto/subtle"
 	"embed"
@@ -164,8 +163,7 @@ type serverConfig struct {
 	creds  Credentials
 	debug  bool
 	logger *slog.Logger
-	// oembedURL is YouTube's oEmbed endpoint; tests point it at a fake. Empty means the real one.
-	oembedURL string
+	oembed *YoutubeOEmbed
 }
 
 // newServer builds the HTTP server with all routes and middleware.
@@ -203,7 +201,10 @@ func newServer(cfg serverConfig) *echo.Echo {
 	admin.DELETE("/videos/:id", deleteVideo(cfg.repo))
 	admin.POST("/subtitles", uploadSubtitle(cfg.repo))
 	admin.DELETE("/subtitles/:id", deleteSubtitle(cfg.repo))
-	admin.GET("/oembed", handleOEmbed(&http.Client{Timeout: oembedTimeout}, cmp.Or(cfg.oembedURL, defaultOEmbedURL)))
+	if cfg.oembed == nil {
+		cfg.oembed = NewYoutubeOEmbed(nil, "")
+	}
+	admin.GET("/oembed", handleOEmbed(cfg.oembed))
 
 	e.GET("/static/*", serveStatic(cfg.debug))
 	// the player is addressed as /<youtube url>
