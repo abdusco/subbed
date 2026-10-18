@@ -96,7 +96,8 @@ func (p *jobProgress) set(ctx context.Context, fraction float64, stage string) {
 		return
 	}
 	p.percent, p.stage = percent, stage
-	if err := p.repo.SetJobProgress(ctx, p.jobID, percent, stage); err != nil {
+	// a canceled job can't write anymore, which is no cause for a warning
+	if err := p.repo.SetJobProgress(ctx, p.jobID, percent, stage); err != nil && ctx.Err() == nil {
 		p.logger.Warn("Couldn't save job progress", "job", p.jobID, "error", err)
 	}
 }
@@ -119,6 +120,17 @@ type JobRunner struct {
 	logger *slog.Logger
 	wake   chan struct{}
 	wg     sync.WaitGroup
+
+	// running is the job being worked on, if any
+	mutex   sync.Mutex
+	running *runningJob
+}
+
+// runningJob lets another goroutine stop the job that is being worked on and wait for it to end.
+type runningJob struct {
+	id     int64
+	cancel context.CancelFunc
+	done   chan struct{}
 }
 
 func NewJobRunner(repo *Repository, tools jobTools, logger *slog.Logger) *JobRunner {
@@ -171,15 +183,47 @@ func (j *JobRunner) drain(ctx context.Context) error {
 	return nil
 }
 
+// Cancel stops the job with this id if it is the one being worked on, and waits until it has ended. It reports
+// whether there was such a job. A job that is only queued is canceled with Repository.CancelQueuedJob.
+func (j *JobRunner) Cancel(ctx context.Context, id int64) bool {
+	j.mutex.Lock()
+	running := j.running
+	j.mutex.Unlock()
+	if running == nil || running.id != id {
+		return false
+	}
+	running.cancel()
+	select {
+	case <-running.done:
+	case <-ctx.Done():
+	}
+	return true
+}
+
+// run works on a job. ctx ends when the server stops; the job's own context also ends when it is canceled, which
+// stops yt-dlp and ffmpeg and abandons the API calls. How the job ended is recorded with ctx, which still works then.
 func (j *JobRunner) run(ctx context.Context, job *Job) {
+	jobCtx, cancel := context.WithCancel(ctx)
+	running := &runningJob{id: job.ID, cancel: cancel, done: make(chan struct{})}
+	j.mutex.Lock()
+	j.running = running
+	j.mutex.Unlock()
+	defer func() {
+		cancel()
+		j.mutex.Lock()
+		j.running = nil
+		j.mutex.Unlock()
+		close(running.done)
+	}()
+
 	log := &jobLog{repo: j.repo, logger: j.logger, jobID: job.ID}
 	log.info(ctx, "Started: %s", job.VideoTitle)
 	var err error
 	switch job.Kind {
 	case jobTranscribe:
-		err = j.transcribe(ctx, job, log)
+		err = j.transcribe(jobCtx, job, log)
 	case jobTranslate:
-		err = j.translateExisting(ctx, job, log)
+		err = j.translateExisting(jobCtx, job, log)
 	default:
 		err = fmt.Errorf("unknown job kind %q", job.Kind)
 	}
@@ -188,10 +232,14 @@ func (j *JobRunner) run(ctx context.Context, job *Job) {
 		return
 	}
 	status, message := jobDone, ""
-	if err != nil {
+	switch {
+	case jobCtx.Err() != nil && err != nil:
+		status = jobCanceled
+		log.info(ctx, "Canceled")
+	case err != nil:
 		status, message = jobFailed, err.Error()
 		log.error(ctx, "Failed: %s", message)
-	} else {
+	default:
 		log.info(ctx, "Done")
 	}
 	if err := j.repo.FinishJob(ctx, job.ID, status, message); err != nil {
@@ -335,7 +383,7 @@ func (l *jobLog) add(ctx context.Context, level, message string) {
 	if utf8.RuneCountInString(message) > maxLogMessageRunes {
 		message = string([]rune(message)[:maxLogMessageRunes]) + "…"
 	}
-	if err := l.repo.AddJobLog(ctx, l.jobID, level, message); err != nil {
+	if err := l.repo.AddJobLog(ctx, l.jobID, level, message); err != nil && ctx.Err() == nil {
 		l.logger.Warn("Couldn't save a job log line", "job", l.jobID, "error", err)
 	}
 }

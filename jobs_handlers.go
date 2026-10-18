@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"net/http"
@@ -103,6 +104,70 @@ func queueJob(c echo.Context, repo *Repository, runner *JobRunner, kind, source 
 		return err
 	}
 	return c.JSON(http.StatusAccepted, job)
+}
+
+// stopJob makes sure a job is neither waiting nor working: a queued job is canceled, and a running one is stopped
+// (this returns once it has ended). Any other job is left alone.
+func stopJob(ctx context.Context, repo *Repository, runner *JobRunner, id int64) error {
+	if _, err := repo.CancelQueuedJob(ctx, id); err != nil {
+		return err
+	}
+	runner.Cancel(ctx, id)
+	return nil
+}
+
+// cancelJob stops a job that is queued or running. A job that is over can't be canceled.
+func cancelJob(repo *Repository, runner *JobRunner) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		ctx := c.Request().Context()
+		id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+		if err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, "Invalid ID")
+		}
+		job, err := repo.GetJob(ctx, id)
+		if errors.Is(err, sql.ErrNoRows) {
+			return echo.NewHTTPError(http.StatusNotFound, "Job not found")
+		}
+		if err != nil {
+			return err
+		}
+		if !isJobActive(job.Status) {
+			return echo.NewHTTPError(http.StatusConflict, "The job is already over")
+		}
+		if err := stopJob(ctx, repo, runner, id); err != nil {
+			return err
+		}
+		if job, err = repo.GetJob(ctx, id); err != nil {
+			return err
+		}
+		return c.JSON(http.StatusOK, job)
+	}
+}
+
+// deleteJob removes a job and its log. A job that is queued or running is stopped first.
+func deleteJob(repo *Repository, runner *JobRunner) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		ctx := c.Request().Context()
+		id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+		if err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, "Invalid ID")
+		}
+		if err := stopJob(ctx, repo, runner, id); err != nil {
+			return err
+		}
+		deleted, err := repo.DeleteJob(ctx, id)
+		if err != nil {
+			return err
+		}
+		if !deleted {
+			return echo.NewHTTPError(http.StatusNotFound, "Job not found")
+		}
+		return c.JSON(http.StatusOK, map[string]any{"success": true})
+	}
+}
+
+func isJobActive(status string) bool {
+	return status == jobQueued || status == jobRunning
 }
 
 func listJobs(repo *Repository) echo.HandlerFunc {

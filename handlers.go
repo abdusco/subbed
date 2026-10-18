@@ -228,13 +228,26 @@ func updateVideo(repo *Repository) echo.HandlerFunc {
 	}
 }
 
-func deleteVideo(repo *Repository) echo.HandlerFunc {
+// deleteVideo removes a video with its subtitles and jobs. A job that is still going for it is stopped first, so it
+// doesn't go on working for a video that is gone. runner may be nil.
+func deleteVideo(repo *Repository, runner *JobRunner) echo.HandlerFunc {
 	return func(c echo.Context) error {
 		id, err := strconv.Atoi(c.Param("id"))
 		if err != nil {
 			return echo.NewHTTPError(http.StatusBadRequest, "Invalid ID")
 		}
 
+		if runner != nil {
+			active, err := repo.ActiveJobIDs(c.Request().Context(), id)
+			if err != nil {
+				return err
+			}
+			for _, jobID := range active {
+				if err := stopJob(c.Request().Context(), repo, runner, jobID); err != nil {
+					return err
+				}
+			}
+		}
 		if err := repo.DeleteVideo(c.Request().Context(), id); err != nil {
 			return err
 		}

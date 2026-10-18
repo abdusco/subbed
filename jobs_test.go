@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -622,6 +623,177 @@ func TestAFailedJobKeepsHowFarItGot(t *testing.T) {
 	percent, stage := progressOf(t, app, job.ID)
 	assert.Equal(t, 35, percent, "the download was done")
 	assert.Empty(t, stage)
+}
+
+// startRunner works through the queue in the background until the test ends.
+func startRunner(t *testing.T, runner *JobRunner) {
+	t.Helper()
+	ctx, stop := context.WithCancel(context.Background())
+	runner.Start(ctx)
+	t.Cleanup(func() {
+		stop()
+		runner.Wait()
+	})
+}
+
+// blockingDownloads makes the first download wait until its job is canceled; later ones succeed. started receives a
+// value when a download begins, and canceled when one was stopped.
+func blockingDownloads() (tools *fakeTools, started, canceled chan struct{}) {
+	started, canceled = make(chan struct{}, 8), make(chan struct{}, 8)
+	var calls atomic.Int32
+	tools = &fakeTools{download: func(ctx context.Context, _, _ string, _ progressFunc, _ logFunc) (string, error) {
+		started <- struct{}{}
+		if calls.Add(1) > 1 {
+			return "/tmp/audio.opus", nil
+		}
+		<-ctx.Done()
+		canceled <- struct{}{}
+		return "", ctx.Err()
+	}}
+	return tools, started, canceled
+}
+
+func cancelRequest(app *testApp, id int64) *httptest.ResponseRecorder {
+	return app.do(http.MethodPost, fmt.Sprintf("/api/admin/jobs/%d/cancel", id), nil, nil, true)
+}
+
+func deleteRequest(app *testApp, id int64) *httptest.ResponseRecorder {
+	return app.do(http.MethodDelete, fmt.Sprintf("/api/admin/jobs/%d", id), nil, nil, true)
+}
+
+func TestCancelAQueuedJob(t *testing.T) {
+	tools := &fakeTools{}
+	app, runner := newJobApp(t, tools)
+	videoID := addTestVideo(t, app)
+	job := decodeJob(t, transcribeRequest(app, videoID, map[string]any{}))
+
+	rec := cancelRequest(app, job.ID)
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	assert.Equal(t, jobCanceled, decodeJob(t, rec).Status)
+
+	runQueued(t, runner)
+	assert.Empty(t, tools.downloads, "a canceled job is never started")
+	assert.Empty(t, subtitleContents(t, app, videoID))
+	assert.Equal(t, 202, transcribeRequest(app, videoID, map[string]any{}).Code, "a canceled job doesn't block the video")
+}
+
+func TestCancelARunningJobStopsItAndTheQueueGoesOn(t *testing.T) {
+	tools, started, canceled := blockingDownloads()
+	app, runner := newJobApp(t, tools)
+	startRunner(t, runner)
+	videoID := addTestVideo(t, app)
+	job := decodeJob(t, transcribeRequest(app, videoID, map[string]any{}))
+	<-started
+	waitForStatus(t, app, job.ID, jobRunning)
+
+	rec := cancelRequest(app, job.ID)
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	got := decodeJob(t, rec)
+	assert.Equal(t, jobCanceled, got.Status, "the answer comes after the job has ended")
+	assert.Empty(t, got.Error, "a cancellation is not an error")
+	select {
+	case <-canceled:
+	default:
+		t.Error("the download was not stopped")
+	}
+	log := logOf(t, app, job.ID)
+	assert.Contains(t, log, "info Canceled")
+	assert.NotContains(t, log, "error Failed")
+	assert.Empty(t, subtitleContents(t, app, videoID))
+
+	next := decodeJob(t, transcribeRequest(app, videoID, map[string]any{}))
+	waitForStatus(t, app, next.ID, jobDone)
+	assert.Contains(t, subtitleContents(t, app, videoID), "en", "the runner took the next job")
+}
+
+func TestCancelRefusals(t *testing.T) {
+	app, runner := newJobApp(t, &fakeTools{})
+	videoID := addTestVideo(t, app)
+	job := decodeJob(t, transcribeRequest(app, videoID, map[string]any{}))
+	runQueued(t, runner)
+
+	assert.Equal(t, 401, app.do(http.MethodPost, fmt.Sprintf("/api/admin/jobs/%d/cancel", job.ID), nil, nil, false).Code, "without login")
+	rec := cancelRequest(app, job.ID)
+	assert.Equal(t, 409, rec.Code, "a finished job can't be canceled")
+	assert.Equal(t, "The job is already over", errorMessage(t, rec))
+	finished, err := app.repo.GetJob(context.Background(), job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, jobDone, finished.Status, "and stays as it was")
+
+	assert.Equal(t, 404, cancelRequest(app, 999).Code)
+	assert.Equal(t, 400, app.do(http.MethodPost, "/api/admin/jobs/abc/cancel", nil, nil, true).Code)
+}
+
+func TestDeleteAJobOfAnyKind(t *testing.T) {
+	app, runner := newJobApp(t, &fakeTools{})
+	videoID := addTestVideo(t, app)
+	queued := decodeJob(t, transcribeRequest(app, videoID, map[string]any{}))
+
+	assert.Equal(t, 401, app.do(http.MethodDelete, fmt.Sprintf("/api/admin/jobs/%d", queued.ID), nil, nil, false).Code, "without login")
+	require.Equal(t, 200, deleteRequest(app, queued.ID).Code, "a queued job")
+	runQueued(t, runner)
+	assert.Empty(t, subtitleContents(t, app, videoID), "a deleted job is not run")
+
+	done := decodeJob(t, transcribeRequest(app, videoID, map[string]any{}))
+	runQueued(t, runner)
+	require.Equal(t, 200, deleteRequest(app, done.ID).Code, "a finished job")
+	assert.Contains(t, subtitleContents(t, app, videoID), "en", "its subtitle stays")
+
+	jobs, err := app.repo.ListJobs(context.Background(), 10)
+	require.NoError(t, err)
+	assert.Empty(t, jobs)
+	logs, err := app.repo.ListJobLogs(context.Background(), done.ID, 0, 10)
+	require.NoError(t, err)
+	assert.Empty(t, logs, "the log goes with the job")
+
+	assert.Equal(t, 404, deleteRequest(app, 999).Code)
+	assert.Equal(t, 400, app.do(http.MethodDelete, "/api/admin/jobs/abc", nil, nil, true).Code)
+}
+
+func TestDeleteARunningJobStopsItFirst(t *testing.T) {
+	tools, started, canceled := blockingDownloads()
+	app, runner := newJobApp(t, tools)
+	startRunner(t, runner)
+	videoID := addTestVideo(t, app)
+	job := decodeJob(t, transcribeRequest(app, videoID, map[string]any{}))
+	<-started
+	waitForStatus(t, app, job.ID, jobRunning)
+
+	require.Equal(t, 200, deleteRequest(app, job.ID).Code)
+
+	select {
+	case <-canceled:
+	default:
+		t.Error("the download was not stopped")
+	}
+	jobs, err := app.repo.ListJobs(context.Background(), 10)
+	require.NoError(t, err)
+	assert.Empty(t, jobs)
+	logs, err := app.repo.ListJobLogs(context.Background(), job.ID, 0, 10)
+	require.NoError(t, err)
+	assert.Empty(t, logs, "nothing is written for a job that was deleted")
+	assert.Equal(t, 202, transcribeRequest(app, videoID, map[string]any{}).Code, "the video is free again")
+}
+
+func TestDeletingAVideoStopsItsRunningJob(t *testing.T) {
+	tools, started, canceled := blockingDownloads()
+	app, runner := newJobApp(t, tools)
+	startRunner(t, runner)
+	videoID := addTestVideo(t, app)
+	job := decodeJob(t, transcribeRequest(app, videoID, map[string]any{}))
+	<-started
+	waitForStatus(t, app, job.ID, jobRunning)
+
+	require.Equal(t, 200, app.do(http.MethodDelete, fmt.Sprintf("/api/admin/videos/%d", videoID), nil, nil, true).Code)
+
+	select {
+	case <-canceled:
+	default:
+		t.Error("the job kept working for a video that is gone")
+	}
+	jobs, err := app.repo.ListJobs(context.Background(), 10)
+	require.NoError(t, err)
+	assert.Empty(t, jobs)
 }
 
 func TestInterruptedJobsAreFailedOnStart(t *testing.T) {

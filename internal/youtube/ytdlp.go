@@ -23,6 +23,8 @@ const (
 	// ytDlpUpdateHour is the local hour at which yt-dlp is updated every day
 	ytDlpUpdateHour      = 3
 	ytDlpDownloadTimeout = 5 * time.Minute
+	// killWaitDelay is how long a canceled yt-dlp may take to close its output before it is cut off
+	killWaitDelay = 2 * time.Second
 )
 
 // YtDlp runs yt-dlp. A yt-dlp found in PATH is preferred and left alone: whoever installed it updates it.
@@ -284,6 +286,7 @@ func (y *YtDlp) DownloadAudio(ctx context.Context, videoURL, directory, cookiesF
 	executable, _ := y.binary()
 	command := exec.CommandContext(ctx, executable, arguments...)
 	command.Stdout, command.Stderr = stdout, stderr
+	stopWithChildren(command)
 	err := command.Run()
 	stdout.Flush()
 	stderr.Flush()

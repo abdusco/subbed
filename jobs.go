@@ -17,10 +17,11 @@ const (
 )
 
 const (
-	jobQueued  = "queued"
-	jobRunning = "running"
-	jobDone    = "done"
-	jobFailed  = "failed"
+	jobQueued   = "queued"
+	jobRunning  = "running"
+	jobDone     = "done"
+	jobFailed   = "failed"
+	jobCanceled = "canceled"
 )
 
 const (
@@ -189,6 +190,44 @@ func (r *Repository) FinishJob(ctx context.Context, id int64, status, errorMessa
 		return fmt.Errorf("failed to finish job: %w", err)
 	}
 	return nil
+}
+
+// CancelQueuedJob cancels a job that has not started, and reports whether it did. The runner can't pick up a job
+// in the same moment, because both only change a job that is still queued.
+func (r *Repository) CancelQueuedJob(ctx context.Context, id int64) (bool, error) {
+	result, err := r.db.Update("jobs").
+		Set(goqu.Record{"status": jobCanceled, "updated_at": time.Now().Unix()}).
+		Where(goqu.C("id").Eq(id), goqu.C("status").Eq(jobQueued)).
+		Executor().
+		ExecContext(ctx)
+	if err != nil {
+		return false, fmt.Errorf("failed to cancel job: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	return affected > 0, err
+}
+
+// DeleteJob removes a job and its log, and reports whether the job existed.
+func (r *Repository) DeleteJob(ctx context.Context, id int64) (bool, error) {
+	result, err := r.db.Delete("jobs").Where(goqu.C("id").Eq(id)).Executor().ExecContext(ctx)
+	if err != nil {
+		return false, fmt.Errorf("failed to delete job: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	return affected > 0, err
+}
+
+// ActiveJobIDs returns the jobs of a video that are queued or running.
+func (r *Repository) ActiveJobIDs(ctx context.Context, videoID int) ([]int64, error) {
+	var ids []int64
+	err := r.db.From("jobs").
+		Select("id").
+		Where(goqu.C("video_id").Eq(videoID), goqu.C("status").In(jobQueued, jobRunning)).
+		ScanValsContext(ctx, &ids)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query active jobs: %w", err)
+	}
+	return ids, nil
 }
 
 // SetJobProgress records how far a job is, in percent, and what it is doing.

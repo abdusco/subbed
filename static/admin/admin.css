@@ -300,24 +300,30 @@ main {
 }
 
 .job {
+    position: relative;
     width: 100%;
     border: 1px solid var(--line);
     border-radius: var(--radius-sm);
     background: var(--surface);
 }
 
-.job > summary {
+.job-details > summary {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 10px;
     min-height: 44px;
-    padding: 0 14px;
+    padding: 10px 92px 10px 14px; /* room on the right for the buttons */
     cursor: pointer;
 }
 
-.job > summary {
-    flex-wrap: wrap;
-    padding-block: 10px;
+/* the buttons sit over the right end of the summary row, since a summary can't contain them */
+.job-actions {
+    position: absolute;
+    top: 4px;
+    right: 8px;
+    display: flex;
+    gap: 2px;
 }
 
 /* a running job's bar and what it is doing, on a row of its own */

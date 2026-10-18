@@ -243,7 +243,7 @@ func newServer(cfg serverConfig) *echo.Echo {
 	admin.GET("/videos", listVideos(cfg.repo))
 	admin.POST("/videos", addVideo(cfg.repo))
 	admin.PATCH("/videos/:id", updateVideo(cfg.repo))
-	admin.DELETE("/videos/:id", deleteVideo(cfg.repo))
+	admin.DELETE("/videos/:id", deleteVideo(cfg.repo, cfg.jobs))
 	admin.POST("/subtitles", uploadSubtitle(cfg.repo))
 	admin.DELETE("/subtitles/:id", deleteSubtitle(cfg.repo))
 	if cfg.oembed == nil {
@@ -260,6 +260,8 @@ func newServer(cfg serverConfig) *echo.Echo {
 		admin.POST("/videos/:id/translate", translateVideo(cfg.repo, cfg.jobs))
 		admin.GET("/jobs", listJobs(cfg.repo))
 		admin.GET("/jobs/:id/logs", getJobLogs(cfg.repo))
+		admin.POST("/jobs/:id/cancel", cancelJob(cfg.repo, cfg.jobs))
+		admin.DELETE("/jobs/:id", deleteJob(cfg.repo, cfg.jobs))
 	}
 	if cfg.ytdlp != nil {
 		admin.GET("/yt-dlp", ytDlpInfo(cfg.ytdlp))

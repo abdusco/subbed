@@ -77,10 +77,12 @@ test("a job log is complete only when the job is over and the last page was not 
     assert.equal(isJobActive({ status: "running" }), true);
     assert.equal(isJobActive({ status: "done" }), false);
     assert.equal(isJobActive({ status: "failed" }), false);
+    assert.equal(isJobActive({ status: "canceled" }), false);
 
     assert.equal(isLogComplete({ status: "running" }, 3), false);
     assert.equal(isLogComplete({ status: "done" }, 3), true);
     assert.equal(isLogComplete({ status: "failed" }, 0), true);
+    assert.equal(isLogComplete({ status: "canceled" }, 2), true);
     assert.equal(isLogComplete({ status: "done" }, LOG_PAGE_SIZE), false);
 });
 

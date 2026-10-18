@@ -72,6 +72,10 @@
                     <rect x="3" y="5" width="18" height="14" rx="3" />
                     <path d="M7 11h3M7 15h6M14 11h3" />
                 </symbol>
+                <symbol id="i-stop" viewBox="0 0 24 24">
+                    <circle cx="12" cy="12" r="9" />
+                    <rect x="9" y="9" width="6" height="6" rx="1" />
+                </symbol>
                 <symbol id="i-translate" viewBox="0 0 24 24">
                     <path d="M4 5h9M8.5 3v2M6 5c.5 3.5 3 6.5 6.5 8M11 5c-.5 3.5-3 6.5-6.5 8M13 20l4-9 4 9M14.5 17h5" />
                 </symbol>
@@ -193,34 +197,59 @@
             <section class="jobs" x-show="jobs.length > 0" aria-labelledby="jobs-title">
                 <h2 id="jobs-title" x-text="t('jobs.title')"></h2>
                 <template x-for="job in visibleJobs" :key="job.id">
-                    <details class="job" @toggle="onJobToggle(job, $event)">
-                        <summary>
-                            <span class="job-status" :class="`is-${job.status}`" x-text="t(`jobs.status.${job.status}`)"></span>
-                            <span class="job-title" x-text="job.video_title"></span>
-                            <time class="job-time" :datetime="jobDate(job).toISOString()" x-text="formatJobTime(job)"></time>
-                            <div class="job-progress" x-show="job.status === 'running'">
-                                <progress max="100" :value="job.progress" :aria-label="jobProgressText(job)"></progress>
-                                <span class="hint" x-text="jobProgressText(job)"></span>
-                            </div>
-                        </summary>
-                        <p class="hint job-detail" x-text="jobSummary(job)"></p>
-                        <p class="error-text job-detail" x-show="job.error" x-text="job.error"></p>
-                        <div
-                            class="job-log"
-                            :id="`job-log-${job.id}`"
-                            role="log"
-                            tabindex="0"
-                            :aria-label="t('jobs.log', { title: job.video_title })"
-                        >
-                            <p class="hint" x-show="!(jobLogs[job.id]?.lines.length)" x-text="t('jobs.noLogs')"></p>
-                            <template x-for="line in jobLogs[job.id]?.lines ?? []" :key="line.id">
-                                <div class="log-line" :class="{ 'is-error': line.level === 'error' }">
-                                    <time x-text="formatLogTime(line)"></time>
-                                    <span x-text="line.message"></span>
+                    <div class="job">
+                        <details class="job-details" @toggle="onJobToggle(job, $event)">
+                            <summary>
+                                <span class="job-status" :class="`is-${job.status}`" x-text="t(`jobs.status.${job.status}`)"></span>
+                                <span class="job-title" x-text="job.video_title"></span>
+                                <time class="job-time" :datetime="jobDate(job).toISOString()" x-text="formatJobTime(job)"></time>
+                                <div class="job-progress" x-show="job.status === 'running'">
+                                    <progress max="100" :value="job.progress" :aria-label="jobProgressText(job)"></progress>
+                                    <span class="hint" x-text="jobProgressText(job)"></span>
                                 </div>
-                            </template>
-                        </div>
-                    </details>
+                            </summary>
+                            <p class="hint job-detail" x-text="jobSummary(job)"></p>
+                            <p class="error-text job-detail" x-show="job.error" x-text="job.error"></p>
+                            <div
+                                class="job-log"
+                                :id="`job-log-${job.id}`"
+                                role="log"
+                                tabindex="0"
+                                :aria-label="t('jobs.log', { title: job.video_title })"
+                            >
+                                <p class="hint" x-show="!(jobLogs[job.id]?.lines.length)" x-text="t('jobs.noLogs')"></p>
+                                <template x-for="line in jobLogs[job.id]?.lines ?? []" :key="line.id">
+                                    <div class="log-line" :class="{ 'is-error': line.level === 'error' }">
+                                        <time x-text="formatLogTime(line)"></time>
+                                        <span x-text="line.message"></span>
+                                    </div>
+                                </template>
+                            </div>
+                        </details>
+                        <!-- beside the summary, not in it: a summary can't hold buttons -->
+                        <span class="job-actions">
+                            <button
+                                class="btn btn-ghost btn-icon btn-small"
+                                type="button"
+                                x-show="isJobActive(job)"
+                                :disabled="Boolean(jobBusy[job.id])"
+                                :aria-label="t('jobs.cancel')"
+                                :title="t('jobs.cancel')"
+                                @click="cancelJob(job)"
+                            >
+                                <svg class="icon"><use href="#i-stop" /></svg>
+                            </button>
+                            <button
+                                class="btn btn-ghost btn-icon btn-small btn-danger-text"
+                                type="button"
+                                :aria-label="t('jobs.delete')"
+                                :title="t('jobs.delete')"
+                                @click="askDelete('job', job, `${job.video_title} · ${formatJobTime(job)}`)"
+                            >
+                                <svg class="icon"><use href="#i-trash" /></svg>
+                            </button>
+                        </span>
+                    </div>
                 </template>
                 <button
                     class="btn btn-ghost btn-small"

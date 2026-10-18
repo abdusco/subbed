@@ -8,7 +8,7 @@ const VIDEO_ID_PATTERN = /^[A-Za-z0-9_-]{11}$/;
 const TIMELINE_PATTERN = /(\d{1,2}:)?\d{2}:\d{2}[,.]\d{3}\s*-->\s*(\d{1,2}:)?\d{2}:\d{2}[,.]\d{3}/;
 const LANGUAGE_PATTERN = /^[a-z]{2,3}(-[a-z0-9]{2,8})*$/;
 
-/** @typedef {{ id: number, status: "queued" | "running" | "done" | "failed" }} JobStatus */
+/** @typedef {{ id: number, status: "queued" | "running" | "done" | "failed" | "canceled" }} JobStatus */
 
 /** How many log lines the server returns per request; fewer means the reader has caught up. */
 export const LOG_PAGE_SIZE = 500;

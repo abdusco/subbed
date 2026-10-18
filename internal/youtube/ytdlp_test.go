@@ -9,8 +9,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -159,6 +162,60 @@ func TestYtDlpDownloadAudio(t *testing.T) {
 	require.NoError(t, err)
 	calls := strings.Split(strings.TrimSpace(readLog(t, log)), "\n")
 	assert.NotContains(t, calls[len(calls)-1], "--cookies", "cookies are only passed with a file")
+}
+
+// A real yt-dlp starts ffmpeg and a JavaScript runtime. Canceling must stop those as well, and must not wait for
+// them to finish by themselves: a child that outlives yt-dlp keeps its output open.
+func TestYtDlpDownloadAudioStopsPromptlyWhenCanceledEvenWithChildProcesses(t *testing.T) {
+	ytdlp, _ := newFakeYtDlp(t)
+	pidFile := filepath.Join(t.TempDir(), "child.pid")
+	t.Setenv("CHILD_PID_FILE", pidFile)
+	slow := `#!/bin/sh
+sleep 60 &
+echo $! > "$CHILD_PID_FILE"
+echo "PROGRESS 10 100 NA"
+wait
+echo /tmp/never.opus
+`
+	require.NoError(t, os.WriteFile(ytdlp.path, []byte(slow), 0o755))
+	t.Cleanup(func() {
+		// whatever the outcome, don't leave the sleeping child behind
+		if data, err := os.ReadFile(pidFile); err == nil {
+			if pid, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil {
+				syscall.Kill(pid, syscall.SIGKILL)
+			}
+		}
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	started := make(chan struct{})
+	var once sync.Once
+	progress := func(float64) { once.Do(func() { close(started) }) }
+	result := make(chan error, 1)
+	go func() {
+		_, err := ytdlp.DownloadAudio(ctx, "https://youtu.be/x", t.TempDir(), "", progress, nil)
+		result <- err
+	}()
+
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the download never started")
+	}
+	cancel()
+	select {
+	case err := <-result:
+		assert.Error(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("a canceled download kept waiting for its child process")
+	}
+
+	data, err := os.ReadFile(pidFile)
+	require.NoError(t, err)
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	require.NoError(t, err)
+	assert.Eventually(t, func() bool { return syscall.Kill(pid, 0) == syscall.ESRCH }, 3*time.Second, 20*time.Millisecond,
+		"the child process was left running after the download was canceled")
 }
 
 func TestParseProgress(t *testing.T) {

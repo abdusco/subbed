@@ -83,13 +83,14 @@ Instead of uploading a file, subbed can make the subtitles from the video's audi
 3. On a video's card there are two separate actions:
    - **Transcribe** downloads the audio and writes a subtitle in the spoken language. Pick the language, or let the model detect it.
    - **Translate** takes one of the subtitles the video already has, whether you uploaded it or transcribed it, and translates it into the languages you pick. It needs no download, so it also works on a video YouTube won't let you download.
-4. Follow the job under **Generation jobs**. Open a job to read its log; it updates by itself while the job runs.
+4. Follow the job under **Generation jobs**. A running job shows a progress bar and what it is doing (downloading, transcribing chunk 2 of 5, translating to Turkish). Open a job to read its log; it updates by itself while the job runs.
+5. To stop a job that is queued or running, click its stop button. The trash button deletes a job and its log; if the job is still running, it is stopped first. Subtitles a job already made stay.
 
 A subtitle in a language the video already has is replaced. A failed translation doesn't stop the others; the job is marked failed and its log says which one. Jobs run one at a time, a video can only have one job queued or running, and a job that was running when the server stopped is marked failed.
 
 **Cookies.** Export them from your browser as a Netscape `cookies.txt` (for example with the "Get cookies.txt LOCALLY" extension) and paste the text in. New values replace old ones with the same domain and name, and other cookies stay. They are stored in the database and are never shown again. Use a throwaway Google account: downloading while signed in can get the account flagged. Anyone who can read your `./data` folder can read the cookies, so protect it and its backups.
 
-**yt-dlp.** If a `yt-dlp` is in the `PATH`, subbed uses it and leaves updating to you. Otherwise it downloads the latest nightly build to `bin/yt-dlp` next to the database on first start and updates it every night at 03:00. Set `YTDLP_PATH` to keep it somewhere else.
+**yt-dlp.** subbed downloads only the audio, as a `.opus` or `.m4a` file. If a `yt-dlp` is in the `PATH`, subbed uses it and leaves updating to you. Otherwise it downloads the latest nightly build to `bin/yt-dlp` next to the database on first start and updates it every night at 03:00. Set `YTDLP_PATH` to keep it somewhere else.
 
 **Cost and quality.** Transcription and translation are paid OpenRouter calls, and a long video means many of them. The result is AI text that viewers will read, so check it before relying on it.
 
@@ -215,7 +216,9 @@ Admin (needs the session cookie; without it the API answers `401`, and `/admin` 
 - `DELETE /api/admin/subtitles/:id`: delete a subtitle (uploading a language again replaces that language's subtitle)
 - `POST /api/admin/videos/:id/transcribe`: queue a job that downloads the audio and transcribes it into a subtitle, JSON body `{ "source_language": "en" }`. `source_language` is optional (empty detects it). Answers `202` with the job; `409` if the video already has a queued or running job, `503` if `OPENROUTER_API_KEY` is not set.
 - `POST /api/admin/videos/:id/translate`: queue a job that translates one of the video's existing subtitles, JSON body `{ "source_language": "en", "languages": ["tr", "de"] }`. Both are required, and the video must have a subtitle in `source_language` (`400` otherwise). Same `202`, `409` and `503` answers.
-- `GET /api/admin/jobs`: the 50 newest jobs, each with `kind` (`transcribe` or `translate`), `status` (`queued`, `running`, `done` or `failed`), `languages`, `source_language`, `error` and `created_at`
+- `GET /api/admin/jobs`: the 50 newest jobs, each with `kind` (`transcribe` or `translate`), `status` (`queued`, `running`, `done`, `failed` or `canceled`), `progress` (percent), `stage` (what a running job is doing), `languages`, `source_language`, `error` and `created_at`
+- `POST /api/admin/jobs/:id/cancel`: stop a queued or running job (it answers once the job has ended; `409` if the job is already over)
+- `DELETE /api/admin/jobs/:id`: delete a job and its log, stopping it first if it is active
 - `GET /api/admin/jobs/:id/logs?after=LOG_ID`: the job and the log lines after the one with that id (`{ "job": {...}, "logs": [{ "id", "at", "level", "message" }] }`), so a page can poll
 - `GET /api/admin/cookies`: how many cookies are stored and for which domains, as `{ "count": 2, "domains": ["youtube.com"] }`; never the values
 - `PUT /api/admin/cookies`: JSON body `{ "cookies": "<text of a Netscape cookies.txt>" }`; upserts by domain and name

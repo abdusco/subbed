@@ -1,5 +1,5 @@
 // Bump SHELL_VERSION whenever any file listed in SHELL_ASSETS (or the /admin page itself) changes.
-const SHELL_VERSION = "19";
+const SHELL_VERSION = "21";
 const CACHE_PREFIX = "subbed-admin-shell-";
 const CACHE_NAME = `${CACHE_PREFIX}${SHELL_VERSION}`;
 const ENTRY_URL = "/admin";

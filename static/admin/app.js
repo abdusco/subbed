@@ -19,7 +19,7 @@ import {
 /**
  * @typedef {{
  *     id: number, video_id: number, video_title: string, kind: "transcribe" | "translate",
- *     status: "queued" | "running" | "done" | "failed", progress: number, stage: string,
+ *     status: "queued" | "running" | "done" | "failed" | "canceled", progress: number, stage: string,
  *     languages: string[], source_language: string, error: string, created_at: number
  * }} Job
  */
@@ -34,6 +34,8 @@ const STORAGE_KEYS = {
     lastTargets: "subbed-admin-last-generation-targets",
 };
 const REFRESH_MIN_INTERVAL_MS = 5000;
+/** the admin API's collection for each kind of thing that can be deleted */
+const DELETE_PATHS = { video: "videos", subtitle: "subtitles", job: "jobs" };
 const JOB_POLL_INTERVAL_MS = 2000;
 const JOBS_SHOWN = 5;
 /** a log scrolled to within this many pixels of its end keeps following new lines */
@@ -144,8 +146,11 @@ document.addEventListener("alpine:init", () => {
             dragging: false,
         },
         editForm: { id: 0, url: "", original: "", title: "", busy: false },
-        confirmation: { kind: /** @type {"video" | "subtitle"} */ ("video"), id: 0, label: "", busy: false },
+        confirmation: { kind: /** @type {"video" | "subtitle" | "job"} */ ("video"), id: 0, label: "", busy: false },
         JOBS_SHOWN,
+        isJobActive,
+        /** the jobs that are being canceled right now */
+        jobBusy: /** @type {Record<number, boolean>} */ ({}),
         /** @type {Job[]} */
         jobs: [],
         jobsExpanded: false,
@@ -705,7 +710,7 @@ document.addEventListener("alpine:init", () => {
         // ---- delete ----
 
         /**
-         * @param {"video" | "subtitle"} kind
+         * @param {"video" | "subtitle" | "job"} kind
          * @param {{ id: number }} item
          * @param {string} label shown in the confirmation text
          */
@@ -718,10 +723,16 @@ document.addEventListener("alpine:init", () => {
             const { kind, id } = this.confirmation;
             this.confirmation.busy = true;
             try {
-                await this.api(`/api/admin/${kind === "video" ? "videos" : "subtitles"}/${id}`, { method: "DELETE" });
+                await this.api(`/api/admin/${DELETE_PATHS[kind]}/${id}`, { method: "DELETE" });
                 this.$refs.confirmDialog.close();
                 this.toast("success", this.t(`${kind}.deleted`));
-                await this.loadVideos();
+                if (kind === "job") {
+                    delete this.openJobs[id];
+                    delete this.jobLogs[id];
+                    await this.loadJobs();
+                } else {
+                    await this.loadVideos();
+                }
             } catch (error) {
                 this.toast("error", error.message);
             } finally {
@@ -918,6 +929,25 @@ document.addEventListener("alpine:init", () => {
             clearTimeout(this.jobPollTimer);
             if (document.visibilityState !== "visible") return;
             await Promise.all([this.loadJobs(), ...this.openIncompleteJobs().map((job) => this.loadJobLogs(job.id).catch(() => {}))]);
+        },
+
+        /**
+         * Stop a job that is queued or running. The answer comes once it has ended.
+         * @param {Job} job
+         */
+        async cancelJob(job) {
+            this.jobBusy[job.id] = true;
+            try {
+                await this.api(`/api/admin/jobs/${job.id}/cancel`, { method: "POST" });
+                this.toast("success", this.t("jobs.canceledToast"));
+            } catch (error) {
+                this.toast("error", error.message);
+            } finally {
+                delete this.jobBusy[job.id];
+                await this.pollJobs();
+                // a canceled job's log has its last line now
+                if (this.openJobs[job.id]) await this.loadJobLogs(job.id).catch(() => {});
+            }
         },
 
         /**
