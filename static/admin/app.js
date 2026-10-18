@@ -248,7 +248,7 @@ document.addEventListener("alpine:init", () => {
         },
 
         /**
-         * Call the admin API. Network failures and non-2xx answers become Errors with a translated message.
+         * Call the admin API. Network failures and non-2xx answers become Errors with a readable message.
          * @param {string} path
          * @param {RequestInit} [options]
          * @returns {Promise<any>}
@@ -261,10 +261,10 @@ document.addEventListener("alpine:init", () => {
                 throw new Error(this.t("error.network"));
             }
             if (!response.ok) {
-                const detail = (await response.text().catch(() => "")).trim();
-                throw new Error(
-                    detail && detail.length < 200 && !detail.startsWith("<") ? detail : this.t("error.http", { status: response.status }),
-                );
+                // the API answers errors as { "error": "message" }
+                const body = await response.json().catch(() => null);
+                const detail = typeof body?.error === "string" ? body.error : "";
+                throw new Error(detail || this.t("error.http", { status: response.status }));
             }
             return response.json();
         },

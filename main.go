@@ -1,26 +1,36 @@
 package main
 
 import (
+	"context"
+	"crypto/subtle"
 	"embed"
 	"errors"
 	"fmt"
 	"io/fs"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"os"
+	"os/signal"
+	"path"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
-	"github.com/gofiber/fiber/v2"
-	"github.com/gofiber/fiber/v2/middleware/basicauth"
-	"github.com/gofiber/fiber/v2/middleware/filesystem"
-	"github.com/gofiber/fiber/v2/middleware/recover"
+	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v4/middleware"
 )
 
 //go:embed static/*
-var staticFS embed.FS
+var embeddedStatic embed.FS
+
+const (
+	maxRequestBody  = "4M"
+	shutdownTimeout = 10 * time.Second
+)
+
+// adminOnlyFile is served through the admin route only. It must never be reachable via the public static handler.
+const adminOnlyFile = "admin.html"
 
 type Video struct {
 	ID          int    `json:"id" db:"id"`
@@ -41,16 +51,9 @@ type VideoResponse struct {
 	Subtitles []Subtitle `json:"subtitles"`
 }
 
-// customErrorHandler handles all errors in a centralized way
-func customErrorHandler(c *fiber.Ctx, err error) error {
-	if errors.Is(err, fiber.ErrInternalServerError) {
-		slog.Error("Request error",
-			"error", err,
-			"path", c.Path(),
-			"method", c.Method())
-	}
-
-	return fiber.DefaultErrorHandler(c, err)
+type Credentials struct {
+	Username string
+	Password string
 }
 
 func main() {
@@ -60,43 +63,56 @@ func main() {
 	}
 }
 
-func run() error {
-	// Get debug mode first to configure logging
-	debug := os.Getenv("DEBUG") == "true"
+// debugEnabled reports whether DEBUG is set to a true value ("1", "true", "t", ...).
+func debugEnabled() bool {
+	enabled, _ := strconv.ParseBool(os.Getenv("DEBUG"))
+	return enabled
+}
 
-	// Initialize structured logging
-	var handler slog.Handler
+func newLogger(debug bool) *slog.Logger {
+	options := &slog.HandlerOptions{Level: slog.LevelInfo}
 	if debug {
-		// Human-readable text format for development
-		handler = slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
-			Level: slog.LevelInfo,
-		})
-	} else {
-		// JSON format for production
-		handler = slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-			Level: slog.LevelInfo,
-		})
+		return slog.New(slog.NewTextHandler(os.Stdout, options))
 	}
-	slog.SetDefault(slog.New(handler))
+	return slog.New(slog.NewJSONHandler(os.Stdout, options))
+}
 
-	// Get environment variables
+func listenAddress() string {
+	if addr := os.Getenv("LISTEN_ADDR"); addr != "" {
+		return addr
+	}
+	host := os.Getenv("HOST")
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "3000"
+	}
+	return host + ":" + port
+}
+
+// staticAssets returns the web files: read from ./static in debug mode so edits show on reload, otherwise
+// the copy embedded in the binary.
+func staticAssets(debug bool) (fs.FS, error) {
+	if debug {
+		return os.DirFS("static"), nil
+	}
+	assets, err := fs.Sub(embeddedStatic, "static")
+	if err != nil {
+		return nil, fmt.Errorf("failed to load static files: %w", err)
+	}
+	return assets, nil
+}
+
+func run() error {
+	debug := debugEnabled()
+	logger := newLogger(debug)
+	slog.SetDefault(logger)
+
 	dbPath := os.Getenv("DATABASE_PATH")
 	if dbPath == "" {
 		dbPath = "./subbed.db"
-	}
-
-	// Get listen address from environment
-	listenAddr := os.Getenv("LISTEN_ADDR")
-	if listenAddr == "" {
-		host := os.Getenv("HOST")
-		if host == "" {
-			host = "127.0.0.1"
-		}
-		port := os.Getenv("PORT")
-		if port == "" {
-			port = "3000"
-		}
-		listenAddr = host + ":" + port
 	}
 
 	creds, err := newCredentialsFromEnvironment("ADMIN_CREDENTIALS")
@@ -104,382 +120,207 @@ func run() error {
 		return fmt.Errorf("failed to parse admin credentials: %w", err)
 	}
 
-	// Initialize repository
 	repo, err := NewRepository(dbPath)
 	if err != nil {
 		return fmt.Errorf("failed to initialize database: %w", err)
 	}
 	defer repo.Close()
 
-	// Create Fiber app
-	app := fiber.New(fiber.Config{
-		Immutable:             true,
-		ErrorHandler:          customErrorHandler,
-		DisableStartupMessage: true,
-	})
-	app.Hooks().OnListen(func(listen fiber.ListenData) error {
-		addr := listen.Host + ":" + listen.Port
-		slog.Info("Listening", "addr", addr)
-		return nil
-	})
-
-	// Add recover middleware to handle panics
-	app.Use(recover.New(recover.Config{
-		EnableStackTrace: true,
-	}))
-
-	// Add custom slog logger middleware
-	app.Use(func(c *fiber.Ctx) error {
-		start := time.Now()
-
-		// Process request
-		err := c.Next()
-
-		// Log after request is complete
-		duration := time.Since(start)
-		status := c.Response().StatusCode()
-
-		logAttrs := []any{
-			"method", c.Method(),
-			"status", status,
-			"path", c.Request().URI().RequestURI(),
-			"duration", duration.String(),
-			"ip", c.IP(),
-			"user_agent", c.Get("User-Agent"),
-		}
-
-		level := slog.LevelInfo
-		if status >= 500 {
-			level = slog.LevelError
-		} else if status >= 400 {
-			level = slog.LevelWarn
-		}
-		slog.Log(c.Context(), level, "HTTP request", logAttrs...)
-
+	assets, err := staticAssets(debug)
+	if err != nil {
 		return err
+	}
+
+	e := newServer(serverConfig{repo: repo, assets: assets, creds: creds, debug: debug, logger: logger})
+
+	addr := listenAddress()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	serverErr := make(chan error, 1)
+	go func() {
+		logger.Info("Listening", "addr", addr, "debug", debug)
+		serverErr <- e.Start(addr)
+	}()
+
+	select {
+	case err := <-serverErr:
+		if !errors.Is(err, http.ErrServerClosed) {
+			return fmt.Errorf("server failed to start: %w", err)
+		}
+		return nil
+	case <-ctx.Done():
+		logger.Info("Shutting down")
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		defer cancel()
+		return e.Shutdown(shutdownCtx)
+	}
+}
+
+type serverConfig struct {
+	repo   *Repository
+	assets fs.FS
+	creds  Credentials
+	debug  bool
+	logger *slog.Logger
+}
+
+// newServer builds the HTTP server with all routes and middleware.
+func newServer(cfg serverConfig) *echo.Echo {
+	e := echo.New()
+	e.HideBanner = true
+	e.HidePort = true
+	e.HTTPErrorHandler = jsonErrorHandler(cfg.logger)
+	// c.File serves from here
+	e.Filesystem = cfg.assets
+
+	e.Use(requestLogger(cfg.logger))
+	e.Use(middleware.RecoverWithConfig(middleware.RecoverConfig{
+		LogErrorFunc: func(c echo.Context, err error, stack []byte) error {
+			cfg.logger.Error("Panic", "error", err, "path", c.Request().URL.Path, "stack", string(stack))
+			return err
+		},
+	}))
+	e.Use(middleware.BodyLimit(maxRequestBody))
+
+	auth := basicAuth(cfg.creds)
+
+	e.GET("/", servePage("index.html"))
+	e.GET("/api/video", handleVideoRequest(cfg.repo))
+
+	e.GET("/admin", servePage(adminOnlyFile), auth)
+	e.GET("/admin/", servePage(adminOnlyFile), auth)
+	// the service worker must live outside /static so its scope can cover /admin
+	e.GET("/admin-sw.js", servePage("admin-sw.js"))
+
+	admin := e.Group("/api/admin", auth)
+	admin.GET("/videos", listVideos(cfg.repo))
+	admin.POST("/videos", addVideo(cfg.repo))
+	admin.DELETE("/videos/:id", deleteVideo(cfg.repo))
+	admin.POST("/subtitles", uploadSubtitle(cfg.repo))
+	admin.DELETE("/subtitles/:id", deleteSubtitle(cfg.repo))
+
+	e.GET("/static/*", serveStatic(cfg.debug))
+	// the player is addressed as /<youtube url>
+	e.GET("/*", func(c echo.Context) error {
+		if _, ok := youtubeURLFromPath(c.Request().URL.EscapedPath()); !ok {
+			return echo.ErrNotFound
+		}
+		return servePage("index.html")(c)
 	})
 
-	serveFile := func(filePath string) fiber.Handler {
-		return func(c *fiber.Ctx) error {
-			if debug {
-				return c.SendFile("./static/" + filePath)
+	return e
+}
+
+// servePage serves one file from the server's assets and makes browsers revalidate it, so a new version is picked up.
+func servePage(name string) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		c.Response().Header().Set(echo.HeaderCacheControl, "no-cache")
+		return c.File(name)
+	}
+}
+
+// serveStatic serves files under /static, except those that are reserved for authenticated routes.
+func serveStatic(debug bool) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		name := path.Clean("/" + c.Param("*"))[1:]
+		if !fs.ValidPath(name) || name == adminOnlyFile {
+			return echo.ErrNotFound
+		}
+		if debug {
+			c.Response().Header().Set(echo.HeaderCacheControl, "no-cache")
+		}
+		return c.File(name)
+	}
+}
+
+// requestLogger logs every request with slog.
+func requestLogger(logger *slog.Logger) echo.MiddlewareFunc {
+	return middleware.RequestLoggerWithConfig(middleware.RequestLoggerConfig{
+		LogMethod:    true,
+		LogURI:       true,
+		LogStatus:    true,
+		LogLatency:   true,
+		LogRemoteIP:  true,
+		LogUserAgent: true,
+		LogError:     true,
+		// let the error handler run first so the logged status is the one the client received
+		HandleError: true,
+		LogValuesFunc: func(c echo.Context, v middleware.RequestLoggerValues) error {
+			attrs := []any{
+				"method", v.Method,
+				"status", v.Status,
+				"path", v.URI,
+				"duration", v.Latency.String(),
+				"ip", v.RemoteIP,
+				"user_agent", v.UserAgent,
 			}
-			content, err := staticFS.ReadFile("static/" + filePath)
-			if err != nil {
-				return err
+			level := slog.LevelInfo
+			switch {
+			case v.Status >= 500:
+				level = slog.LevelError
+				if v.Error != nil {
+					attrs = append(attrs, "error", v.Error.Error())
+				}
+			case v.Status >= 400:
+				level = slog.LevelWarn
 			}
-			c.Set("Content-Type", "text/html")
-			return c.Send(content)
-		}
-	}
-
-	// Specific routes (registered first to take precedence)
-
-	if debug {
-		app.Static("/static", "./static")
-	} else {
-		staticFS, err := fs.Sub(staticFS, "static")
-		if err != nil {
-			return fmt.Errorf("failed to load static files: %w", err)
-		}
-		app.Use("/static", filesystem.New(filesystem.Config{
-			Root: http.FS(staticFS),
-		}))
-	}
-
-	app.Get("/", serveFile("index.html"))
-
-	app.Get("/api/video", handleVideoRequest(repo))
-
-	auth := basicAuthMiddleware(creds)
-	app.Get("/admin", auth, serveFile("admin.html"))
-
-	adminAPI := app.Group("/api/admin", auth)
-	adminAPI.Get("/videos", listVideos(repo))
-	adminAPI.Post("/videos", addVideo(repo))
-	adminAPI.Delete("/videos/:id", deleteVideo(repo))
-	adminAPI.Post("/subtitles", uploadSubtitle(repo))
-	adminAPI.Delete("/subtitles/:id", deleteSubtitle(repo))
-
-	app.Get("/*", func(c *fiber.Ctx) error {
-		_, ok := youtubeURLFromPath(string(c.Request().URI().PathOriginal()))
-		if !ok {
-			return c.Next()
-		}
-		return serveFile("index.html")(c)
-	})
-
-	if debug {
-		app.Static("/", "./static")
-	} else {
-		staticFS, err := fs.Sub(staticFS, "static")
-		if err != nil {
-			slog.Error("Failed to load static files", "error", err)
-			os.Exit(1)
-		}
-		app.Use("/", filesystem.New(filesystem.Config{
-			Root: http.FS(staticFS),
-		}))
-	}
-
-	if err := app.Listen(listenAddr); err != nil {
-		return fmt.Errorf("server failed to start: %w", err)
-	}
-
-	return nil
-}
-
-type Credentials struct {
-	Username string
-	Password string
-}
-
-func newCredentialsFromEnvironment(envVar string) (Credentials, error) {
-	creds := os.Getenv(envVar)
-	parts := strings.SplitN(creds, ":", 2)
-	if len(parts) != 2 {
-		return Credentials{}, fmt.Errorf("invalid credentials format in %q, expected username:password", envVar)
-	}
-	return Credentials{
-		Username: parts[0],
-		Password: parts[1],
-	}, nil
-}
-
-func basicAuthMiddleware(creds Credentials) fiber.Handler {
-	return basicauth.New(basicauth.Config{
-		Users: map[string]string{
-			creds.Username: creds.Password,
+			logger.Log(c.Request().Context(), level, "HTTP request", attrs...)
+			return nil
 		},
 	})
 }
 
-func youtubeURLFromPath(path string) (string, bool) {
-	parts := strings.SplitN(path, "http", 2)
-	if len(parts) != 2 {
-		return "", false
-	}
-	urlStr := "http" + parts[1]
-
-	if strings.HasPrefix(urlStr, "https:/") && !strings.HasPrefix(urlStr, "https://") {
-		urlStr = strings.Replace(urlStr, "https:/", "https://", 1)
-	} else if strings.HasPrefix(urlStr, "http:/") && !strings.HasPrefix(urlStr, "http://") {
-		urlStr = strings.Replace(urlStr, "http:/", "http://", 1)
-	}
-
-	return urlStr, true
+// errorResponse is the body of every API error.
+type errorResponse struct {
+	Error string `json:"error"`
 }
 
-func youtubeVideoIDFromURL(urlStr string) (string, bool) {
-	parsedURL, err := url.Parse(urlStr)
-	if err == nil {
-		// Extract video ID from different YouTube URL formats
-		if strings.Contains(parsedURL.Host, "youtube.com") {
-			// Standard format: youtube.com/watch?v=VIDEO_ID
-			videoID := parsedURL.Query().Get("v")
-			if videoID != "" {
-				return videoID, true
-			}
-		} else if strings.Contains(parsedURL.Host, "youtu.be") {
-			// Short format: youtu.be/VIDEO_ID
-			videoID := strings.TrimPrefix(parsedURL.Path, "/")
-			if videoID != "" {
-				return videoID, true
+// jsonErrorHandler answers errors with {"error": "message"}. Unexpected errors are reported as a generic
+// 500 and are logged, with their details, by the request logger.
+func jsonErrorHandler(logger *slog.Logger) echo.HTTPErrorHandler {
+	return func(err error, c echo.Context) {
+		if c.Response().Committed {
+			return
+		}
+		code := http.StatusInternalServerError
+		message := http.StatusText(code)
+		var httpError *echo.HTTPError
+		if errors.As(err, &httpError) {
+			code = httpError.Code
+			message = http.StatusText(code)
+			if text, ok := httpError.Message.(string); ok && text != "" {
+				message = text
 			}
 		}
-	}
-
-	return "", false
-}
-
-func handleVideoRequest(repo *Repository) fiber.Handler {
-	return func(c *fiber.Ctx) error {
-		ctx := c.Context()
-
-		// Get the full path after /v/
-		youtubeURL := c.Query("url")
-
-		// Parse video ID
-		videoID, ok := youtubeVideoIDFromURL(youtubeURL)
-		if !ok {
-			return fiber.NewError(fiber.StatusBadRequest, "Invalid YouTube URL")
-		}
-
-		// Look up video in database
-		video, err := repo.GetVideoByURL(ctx, videoID)
-		if err != nil {
-			return fiber.NewError(fiber.StatusNotFound, "Video not found")
-		}
-
-		// Get subtitles for this video
-		subtitles, err := repo.GetSubtitlesByVideoID(ctx, video.ID)
-		if err != nil {
-			return err
-		}
-
-		// Return response
-		return c.JSON(VideoResponse{
-			Video: Video{
-				ID:          video.ID,
-				OriginalURL: videoID,
-				Title:       video.Title,
-			},
-			Subtitles: subtitles,
-		})
-	}
-}
-
-func listVideos(repo *Repository) fiber.Handler {
-	return func(c *fiber.Ctx) error {
-		ctx := c.Context()
-
-		videos, err := repo.ListAllVideos(ctx)
-		if err != nil {
-			return err
-		}
-
-		return c.JSON(videos)
-	}
-}
-
-func addVideo(repo *Repository) fiber.Handler {
-	return func(c *fiber.Ctx) error {
-		ctx := c.Context()
-
-		var req struct {
-			URL   string `json:"url"`
-			Title string `json:"title"`
-		}
-
-		if err := c.BodyParser(&req); err != nil {
-			return fiber.NewError(fiber.StatusBadRequest, "Invalid request")
-		}
-
-		id, err := repo.CreateVideo(ctx, req.URL, req.Title)
-		if err != nil {
-			return err
-		}
-
-		return c.JSON(fiber.Map{"id": id})
-	}
-}
-
-func deleteVideo(repo *Repository) fiber.Handler {
-	return func(c *fiber.Ctx) error {
-		ctx := c.Context()
-
-		id := c.Params("id")
-		idInt, err := strconv.Atoi(id)
-		if err != nil {
-			return fiber.NewError(fiber.StatusBadRequest, "Invalid ID")
-		}
-
-		err = repo.DeleteVideo(ctx, idInt)
-		if err != nil {
-			return err
-		}
-		return c.JSON(fiber.Map{"success": true})
-	}
-}
-
-func uploadSubtitle(repo *Repository) fiber.Handler {
-	return func(c *fiber.Ctx) error {
-		ctx := c.Context()
-
-		videoID := c.FormValue("video_id")
-		videoIDInt, err := strconv.Atoi(videoID)
-		if err != nil {
-			return fiber.NewError(fiber.StatusBadRequest, "Invalid video ID")
-		}
-
-		language := c.FormValue("language")
-		fileType := c.FormValue("type")
-
-		file, err := c.FormFile("file")
-		if err != nil {
-			return fiber.NewError(fiber.StatusBadRequest, "No file uploaded")
-		}
-
-		// Read file content
-		fileContent, err := file.Open()
-		if err != nil {
-			return err
-		}
-		defer fileContent.Close()
-
-		content := make([]byte, file.Size)
-		_, err = fileContent.Read(content)
-		if err != nil {
-			return err
-		}
-
-		contentStr := string(content)
-
-		// Convert VTT to SRT if necessary
-		if fileType == "vtt" {
-			contentStr = vttToSRT(contentStr)
-		}
-
-		// Save to database (always as SRT)
-		err = repo.CreateSubtitle(ctx, videoIDInt, language, "srt", contentStr)
-		if err != nil {
-			return err
-		}
-
-		return c.JSON(fiber.Map{"success": true})
-	}
-}
-
-func deleteSubtitle(repo *Repository) fiber.Handler {
-	return func(c *fiber.Ctx) error {
-		ctx := c.Context()
-
-		id := c.Params("id")
-		idInt, err := strconv.Atoi(id)
-		if err != nil {
-			return fiber.NewError(fiber.StatusBadRequest, "Invalid ID")
-		}
-
-		err = repo.DeleteSubtitle(ctx, idInt)
-		if err != nil {
-			return err
-		}
-		return c.JSON(fiber.Map{"success": true})
-	}
-}
-
-func vttToSRT(vtt string) string {
-	lines := strings.Split(vtt, "\n")
-	var srtLines []string
-	counter := 1
-	skipHeader := true
-
-	for i := 0; i < len(lines); i++ {
-		line := strings.TrimSpace(lines[i])
-
-		// Skip VTT header
-		if skipHeader {
-			if strings.HasPrefix(line, "WEBVTT") || line == "" {
-				continue
-			}
-			skipHeader = false
-		}
-
-		// Check if line is a timestamp
-		if strings.Contains(line, "-->") {
-			// Add counter
-			srtLines = append(srtLines, strconv.Itoa(counter))
-			counter++
-
-			// Convert timestamp format (remove millisecond dot to comma)
-			line = strings.ReplaceAll(line, ".", ",")
-			srtLines = append(srtLines, line)
-		} else if line != "" {
-			srtLines = append(srtLines, line)
+		var sendErr error
+		if c.Request().Method == http.MethodHead {
+			sendErr = c.NoContent(code)
 		} else {
-			srtLines = append(srtLines, "")
+			sendErr = c.JSON(code, errorResponse{Error: message})
+		}
+		if sendErr != nil {
+			logger.Error("Failed to send error response", "error", sendErr)
 		}
 	}
+}
 
-	return strings.Join(srtLines, "\n")
+func newCredentialsFromEnvironment(envVar string) (Credentials, error) {
+	username, password, ok := strings.Cut(os.Getenv(envVar), ":")
+	if !ok || username == "" || password == "" {
+		return Credentials{}, fmt.Errorf("invalid credentials format in %q, expected username:password", envVar)
+	}
+	return Credentials{Username: username, Password: password}, nil
+}
+
+func basicAuth(creds Credentials) echo.MiddlewareFunc {
+	return middleware.BasicAuthWithConfig(middleware.BasicAuthConfig{
+		Realm: "Subbed admin",
+		Validator: func(username, password string, _ echo.Context) (bool, error) {
+			// compare both fields in constant time and without short-circuiting
+			userMatch := subtle.ConstantTimeCompare([]byte(username), []byte(creds.Username))
+			passwordMatch := subtle.ConstantTimeCompare([]byte(password), []byte(creds.Password))
+			return userMatch&passwordMatch == 1, nil
+		},
+	})
 }

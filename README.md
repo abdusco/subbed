@@ -1,182 +1,180 @@
 # Subbed
 
-A YouTube video player with synchronized subtitles using Alpine.js, Go (Fiber), and SQLite.
+Watch YouTube videos with your own subtitles.
 
-## Features
+You add a video and upload subtitle files for it (SRT or VTT). When you open the video in Subbed, the subtitles show on top of the player, in sync. A video can have subtitles in several languages, and you pick which one to show.
 
-- YouTube video embedding with custom subtitle support
-- Synchronized subtitle display (SRT/VTT formats)
-- Admin interface for managing videos and subtitles
-- Docker support with volume persistence
-- Built with Alpine.js and Go Fiber
+Subbed is a small self-hosted app: one container, no external services except YouTube itself.
 
-## Quick Start
+## Quick start
 
-### Using Docker
+You need [Docker](https://docs.docker.com/get-docker/).
 
 ```bash
-docker pull ghcr.io/abdusco/subbed:latest
 docker run -d \
+  --name subbed \
   -p 3000:3000 \
-  -e ADMIN_CREDENTIALS=admin:admin \
+  -e HOST=0.0.0.0 \
+  -e DATABASE_PATH=/app/data/subbed.db \
+  -e ADMIN_CREDENTIALS=admin:change-me \
   -v ./data:/app/data \
+  --restart unless-stopped \
   ghcr.io/abdusco/subbed:latest
 ```
 
-### Using Docker Compose
+Then open:
 
-1. Create a `docker-compose.yml`:
+- **Player:** http://localhost:3000
+- **Admin:** http://localhost:3000/admin (sign in with the username and password from `ADMIN_CREDENTIALS`)
+
+Your videos and subtitles are stored in `./data`, so they survive updates and restarts.
+
+<details>
+<summary>Docker Compose</summary>
+
 ```yaml
-version: '3.8'
-
 services:
-  subbed:
-    image: ghcr.io/abdusco/subbed:latest
-    ports:
-      - "3000:3000"
-    environment:
-      - DATABASE_PATH=/app/data/subbed.db
-      - ADMIN_CREDENTIALS=admin:admin
-      - DEBUG=false
-      - HOST=0.0.0.0  # Listen on all interfaces inside container
-      - PORT=3000
-    volumes:
-      - ./data:/app/data
-    restart: unless-stopped
+    subbed:
+        image: ghcr.io/abdusco/subbed:latest
+        ports:
+            - "3000:3000"
+        environment:
+            - HOST=0.0.0.0
+            - DATABASE_PATH=/app/data/subbed.db
+            - ADMIN_CREDENTIALS=admin:change-me
+        volumes:
+            - ./data:/app/data
+        restart: unless-stopped
 ```
 
-2. Run:
-```bash
-docker-compose up -d
+Run it with `docker compose up -d`.
+
+</details>
+
+To update, pull the new image and recreate the container (`docker pull ghcr.io/abdusco/subbed:latest`, then `docker compose up -d` or re-run the `docker run` command).
+
+## Using Subbed
+
+### Add a video and its subtitles
+
+1. Open the admin page and click **Add video**.
+2. Paste the YouTube link (or just the video ID) and give it a title. A thumbnail preview confirms you picked the right video.
+3. On the video's card, click **Add subtitle**.
+4. Choose a `.srt` or `.vtt` file, enter the language code (for example `en` or `tr`), and click **Upload subtitle**.
+
+Shortcuts for step 4:
+
+- **Drop** a subtitle file anywhere on the admin page, or **paste** it with Ctrl+V (Cmd+V on a Mac). You can even paste the subtitle text itself.
+- If the file name ends in a language code, like `movie.tr.srt`, the language is filled in for you.
+
+To remove a subtitle, click the **×** on its tag. **Delete** removes the video and all of its subtitles.
+
+### Watch a video
+
+Open the player and paste a YouTube link, or go straight to it:
+
+```
+http://localhost:3000/https://www.youtube.com/watch?v=VIDEO_ID
 ```
 
-3. Access the application:
-   - Main app: http://localhost:3000
-   - Admin panel: http://localhost:3000/admin (default: admin/admin)
+Share that link with anyone who can reach your server.
 
-### Local Development
+Below the video you can:
 
-1. Install dependencies:
-```bash
-go mod download
-```
+- **Switch subtitles** between the languages you uploaded, or turn them off. Your choice is remembered.
+- **Change the size** of the subtitle text.
+- **Shift the timing** in half-second steps if the subtitles run early or late. Click the value to reset it.
+- Go **fullscreen** with the subtitles still visible.
 
-2. Run in debug mode:
-```bash
-DEBUG=true ADMIN_CREDENTIALS=admin:admin go run .
-```
+If a video has no subtitles in your library, it still plays, using YouTube's own captions when available.
 
-3. Access:
-   - Main app: http://localhost:3000
-   - Admin panel: http://localhost:3000/admin
+### Install the admin page as an app
+
+The admin page is a progressive web app. In Chrome, Edge or Safari use **Install** (or **Add to Home Screen**) to add it to your desktop or phone. It opens quickly and the interface loads even when you're offline, but adding videos and uploading subtitles needs a connection to your server.
+
+### Language and appearance
+
+Both pages follow your browser language (English or Turkish) and your system's light or dark theme. Change either from the settings button in the top bar. The choice is saved in your browser.
+
+## Subtitle files
+
+- **Formats:** SRT and VTT. VTT files are converted to SRT when uploaded.
+- **Several lines in one subtitle** are kept as separate lines, so dialogue like `- Hello` / `- Hi there` shows on two lines.
+- **Formatting:** `<i>` and `<b>` tags, and `*italic*` / `**bold**`, are supported. Other tags are removed.
+- **Languages:** use short codes such as `en`, `tr`, `de` or `pt-br`.
 
 ## Configuration
 
-Environment variables:
+Set these as environment variables.
 
-- `DATABASE_PATH`: SQLite database file path (default: `./subbed.db`)
-- `ADMIN_CREDENTIALS`: Admin credentials in format `username:password` (required)
-- `DEBUG`: Enable debug mode to serve static files from filesystem (default: `false`)
-- `HOST`: Interface to bind to (default: `127.0.0.1`). Use `0.0.0.0` to listen on all interfaces
-- `PORT`: Port to listen on (default: `3000`)
-- `LISTEN_ADDR`: Full listen address, overrides `HOST` and `PORT` if set (e.g., `0.0.0.0:8080`)
+| Variable            | Default       | What it does                                                                                               |
+| ------------------- | ------------- | ---------------------------------------------------------------------------------------------------------- |
+| `ADMIN_CREDENTIALS` | _(required)_  | Admin login as `username:password`.                                                                        |
+| `DATABASE_PATH`     | `./subbed.db` | Where the SQLite database is stored. In Docker, use a path inside your mounted volume.                     |
+| `HOST`              | `127.0.0.1`   | Network interface to listen on. Use `0.0.0.0` in Docker or to allow other devices to connect.              |
+| `PORT`              | `3000`        | Port to listen on.                                                                                         |
+| `LISTEN_ADDR`       |               | Full address such as `0.0.0.0:8080`. Overrides `HOST` and `PORT`.                                          |
+| `DEBUG`             | `0`           | Set to `1` to serve the web files from disk and log in a readable format instead of JSON. For development. |
 
-### Listen Address Examples
+## Keeping it safe
+
+- **Choose a real admin password.** `admin:admin` is only for trying Subbed out.
+- **Use HTTPS if it's reachable from the internet.** The admin login is sent with every request, so put Subbed behind a reverse proxy that provides HTTPS (Caddy, Traefik or nginx). The admin page can only be installed as an app over HTTPS, apart from `localhost`.
+- **The player is public.** Anyone who can reach the server can watch any video you added. Adding, changing or deleting videos and subtitles requires the admin login.
+
+## For developers
+
+Subbed is a Go ([Echo](https://echo.labstack.com)) server with a SQLite database and a plain HTML, CSS and JavaScript frontend using [Alpine.js](https://alpinejs.dev). The frontend files in `static/` are embedded into the binary.
 
 ```bash
-# Listen on localhost only (default)
-./subbed
+# run locally; web files are served from ./static, so edits show on reload
+DEBUG=1 ADMIN_CREDENTIALS=admin:admin go run .
 
-# Listen on all interfaces
-HOST=0.0.0.0 ./subbed
+# server tests
+go test ./...
 
-# Change port
-PORT=8080 ./subbed
-
-# Bind to specific interface and port
-HOST=192.168.1.100 PORT=8000 ./subbed
-
-# Or use LISTEN_ADDR for full control
-LISTEN_ADDR=0.0.0.0:8080 ./subbed
+# frontend unit tests (Node 20+)
+node --test tests/*.mjs
 ```
 
-## Usage
+- **Layout:** `static/index.html` and `static/player/` are the player; `static/admin.html`, `static/admin/` and `static/admin-sw.js` are the admin app.
+- **Admin service worker:** it caches the admin app shell for offline start. Bump `SHELL_VERSION` in `static/admin-sw.js` whenever a file it caches changes, or users keep the old version. Open tabs then show a "new version is ready" banner.
+- **Debug mode and the service worker:** with `DEBUG=1`, edits can look ignored until you bump the version, clear the site's service worker, or tick "Update on reload" in your browser's developer tools.
 
-### Adding Videos
+<details>
+<summary>HTTP API</summary>
 
-1. Go to http://localhost:3000/admin
-2. Log in with admin credentials
-3. Add a new video with YouTube URL and title
-4. Upload subtitle files (SRT or VTT format)
+Public:
 
-### Viewing Videos
-
-Navigate to http://localhost:3000 and either:
-- Enter a YouTube URL in the interface
-- Use direct URL routing: `http://localhost:3000/https://youtube.com/watch?v=VIDEO_ID`
-
-### API Endpoints
-
-Get video and subtitle data:
 ```
-GET /api/video?url=https://youtube.com/watch?v=VIDEO_ID
+GET /api/video?url=https://www.youtube.com/watch?v=VIDEO_ID
 ```
 
-Response:
+Returns the video and all of its subtitles (with their full content):
+
 ```json
 {
-  "video": {
-    "id": 1,
-    "original_url": "VIDEO_ID",
-    "title": "Video Title"
-  },
-  "subtitles": [
-    {
-      "id": 1,
-      "video_id": 1,
-      "language": "en",
-      "type": "srt",
-      "content": "..."
-    }
-  ]
+    "video": { "id": 1, "original_url": "VIDEO_ID", "title": "Video title" },
+    "subtitles": [
+        {
+            "id": 1,
+            "video_id": 1,
+            "language": "en",
+            "type": "srt",
+            "content": "..."
+        }
+    ]
 }
 ```
 
-Admin API (requires basic auth):
-- `GET /api/admin/videos` - List all videos with subtitles
-- `POST /api/admin/videos` - Add new video
-- `DELETE /api/admin/videos/:id` - Delete video
-- `POST /api/admin/subtitles` - Upload subtitle file
-- `DELETE /api/admin/subtitles/:id` - Delete subtitle
+Errors are returned as `{ "error": "message" }` with a matching HTTP status.
 
-## Database Schema
+Admin (HTTP Basic auth):
 
-### Videos Table
-- `id`: INTEGER PRIMARY KEY
-- `original_url`: TEXT (YouTube URL)
-- `title`: TEXT
+- `GET /api/admin/videos`: list videos with their subtitles (without content)
+- `POST /api/admin/videos`: add a video, JSON body `{ "url": "...", "title": "..." }`
+- `DELETE /api/admin/videos/:id`: delete a video and its subtitles
+- `POST /api/admin/subtitles`: upload a subtitle, multipart form with `video_id`, `language`, `type` (`srt` or `vtt`) and `file`
+- `DELETE /api/admin/subtitles/:id`: delete a subtitle
 
-### Subtitles Table
-- `id`: INTEGER PRIMARY KEY
-- `video_id`: INTEGER (foreign key)
-- `language`: TEXT (e.g., "en", "es")
-- `type`: TEXT (always "srt")
-- `content`: TEXT (subtitle content)
-
-## Tech Stack
-
-- **Frontend**: Alpine.js, Vanilla JavaScript, YouTube IFrame API
-- **Backend**: Go 1.24, Fiber v2
-- **Database**: SQLite3 (modernc.org/sqlite)
-- **Query Builder**: goqu
-- **Deployment**: Docker, Docker Compose
-
-## Development
-
-The application embeds static files in the binary for production. Set `DEBUG=true` to serve files from `./static` directory for development. Structured logging (slog) with JSON output is used throughout.
-
-The admin page (`/admin`) is an installable PWA with an offline app shell: bump `SHELL_VERSION` in `static/admin-sw.js` whenever a file it caches changes. Frontend logic that doesn't need a browser has unit tests:
-
-```bash
-node --test tests/*.mjs
-```
+</details>
