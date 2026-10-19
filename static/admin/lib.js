@@ -143,15 +143,16 @@ export function sniffSubtitleText(text) {
 }
 
 /**
- * Find a language code hidden in a file name, e.g. "movie.tr.srt" or "movie_en-US.vtt".
+ * Find a known language in a file name: a lowercase 2-letter word that is one of GENERATION_LANGUAGES, e.g.
+ * "movie.tr.srt" or "film en final.vtt". The last one wins, since the code usually trails the title.
  * @param {string} name file name
  * @returns {string | null}
  */
 export function languageFromName(name) {
     const base = String(name ?? "").replace(/\.(srt|vtt)$/i, "");
-    // a separator, then a 2-3 letter code and an optional region, at the very end of the name
-    const match = /[._\s-]([a-z]{2,3}(?:[-_][A-Za-z0-9]{2,4})?)$/i.exec(base);
-    return match ? normalizeLanguage(match[1]) : null;
+    const known = new Set(GENERATION_LANGUAGES.map((language) => language.code));
+    const words = base.match(/(?<![A-Za-z])[a-z]{2}(?![A-Za-z])/g) ?? [];
+    return words.findLast((word) => known.has(word)) ?? null;
 }
 
 /**

@@ -51,8 +51,14 @@ test("subtitle type, language and text sniffing", () => {
     assert.equal(subtitleTypeFromName("a.vtt"), "vtt");
     assert.equal(subtitleTypeFromName("a.txt"), null);
     assert.equal(languageFromName("My Movie.tr.srt"), "tr");
-    assert.equal(languageFromName("movie_en-US.vtt"), "en-us");
+    assert.equal(languageFromName("movie_en-US.vtt"), "en");
+    assert.equal(languageFromName("tr movie.srt"), "tr");
+    assert.equal(languageFromName("de - my film - tr.vtt"), "tr");
+    assert.equal(languageFromName("tr movie xx.srt"), "tr");
+    assert.equal(languageFromName("movie.xx.srt"), null);
+    assert.equal(languageFromName("Movie EN.srt"), null);
     assert.equal(languageFromName("movie.srt"), null);
+    assert.equal(languageFromName("Pluribus.S01E09.La.Chica.o.El.Mundo.720p.ATVP.WEB-DL.DDP5.1.H.264-NTb.srt"), null);
     assert.equal(sniffSubtitleText("1\n00:00:01,000 --> 00:00:02,500\nHi"), "srt");
     assert.equal(sniffSubtitleText("WEBVTT\n\n00:01.000 --> 00:02.500\nHi"), "vtt");
     assert.equal(sniffSubtitleText("just some text"), null);
