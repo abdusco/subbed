@@ -588,7 +588,7 @@ input[aria-invalid="true"] {
 .video-list {
     display: grid;
     gap: 14px;
-    grid-template-columns: repeat(auto-fill, minmax(min(100%, 480px), 1fr));
+    grid-template-columns: minmax(0, 1fr);
 }
 
 .video-card {
@@ -753,7 +753,7 @@ input[aria-invalid="true"] {
 /* ---------- dialogs ---------- */
 
 dialog {
-    width: min(100% - 32px, 480px);
+    width: min(100% - 32px, 600px);
     max-height: calc(100dvh - 32px);
     padding: 0;
     border: 1px solid var(--line);
