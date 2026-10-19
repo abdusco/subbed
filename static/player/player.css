@@ -492,14 +492,6 @@ main {
     text-align: center;
 }
 
-button.value {
-    cursor: pointer;
-}
-
-button.value:hover {
-    background: var(--surface-2);
-}
-
 .toolbar .spacer {
     margin-left: auto;
 }

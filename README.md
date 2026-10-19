@@ -108,10 +108,9 @@ Below the video you can:
 
 - **Switch subtitles** between the languages you uploaded, or turn them off. Your choice is remembered.
 - **Change the size** of the subtitle text.
-- **Shift the timing** in half-second steps if the subtitles run early or late. Click the value to reset it.
 - Go **fullscreen** with the subtitles still visible.
 
-Press `[` or `]` to seek to the previous or next cue start in the selected subtitle track. These shortcuts account for the subtitle timing offset.
+Press `[` or `]` to seek to the previous or next cue start in the selected subtitle track.
 
 If a video has no subtitles in your library, it still plays, using YouTube's own captions when available.
 

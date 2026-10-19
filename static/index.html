@@ -196,38 +196,6 @@
                         </div>
                     </div>
 
-                    <div class="field" role="group" x-show="tracks.length > 0" aria-labelledby="delay-label">
-                        <span id="delay-label" x-text="t('delay.label')"></span>
-                        <div class="stepper">
-                            <button
-                                class="btn btn-ghost btn-icon"
-                                type="button"
-                                :aria-label="t('delay.earlier')"
-                                :title="t('delay.earlier')"
-                                @click="bumpDelay(-1)"
-                            >
-                                <svg class="icon"><use href="#i-minus" /></svg>
-                            </button>
-                            <button
-                                class="value"
-                                type="button"
-                                :title="t('delay.reset')"
-                                :aria-label="`${t('delay.reset')}: ${delayLabel}`"
-                                x-text="delayLabel"
-                                @click="resetDelay()"
-                            ></button>
-                            <button
-                                class="btn btn-ghost btn-icon"
-                                type="button"
-                                :aria-label="t('delay.later')"
-                                :title="t('delay.later')"
-                                @click="bumpDelay(1)"
-                            >
-                                <svg class="icon"><use href="#i-plus" /></svg>
-                            </button>
-                        </div>
-                    </div>
-
                     <button class="btn btn-ghost spacer" type="button" x-show="canFullscreen" @click="toggleFullscreen()">
                         <svg class="icon"><use :href="fullscreen ? '#i-minimize' : '#i-maximize'" /></svg>
                         <span x-text="fullscreen ? t('fullscreen.exit') : t('fullscreen.enter')"></span>

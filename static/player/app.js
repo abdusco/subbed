@@ -14,8 +14,6 @@ const STORAGE_KEYS = {
 };
 const SIZE_STEPS = [0.75, 0.9, 1, 1.15, 1.3, 1.5, 1.75];
 const DEFAULT_SIZE_INDEX = 2;
-const DELAY_STEP_SECONDS = 0.5;
-const DELAY_LIMIT_SECONDS = 30;
 const SYNC_INTERVAL_MS = 100;
 // how many sync ticks pass between checks that YouTube's own captions are still off (every 0.5 s)
 const CAPTION_CHECK_EVERY_TICKS = 5;
@@ -129,7 +127,6 @@ document.addEventListener("alpine:init", () => {
         trackId: OFF,
         cueHtml: "",
         sizeIndex: Math.min(Math.max(Number(storage.get(STORAGE_KEYS.size) ?? DEFAULT_SIZE_INDEX), 0), SIZE_STEPS.length - 1),
-        delay: 0,
         fullscreen: false,
         canFullscreen: Boolean(document.fullscreenEnabled),
         themePreference: /** @type {ThemePreference} */ (storage.get(STORAGE_KEYS.theme) ?? "system"),
@@ -395,7 +392,7 @@ document.addEventListener("alpine:init", () => {
         /** Show the cue for the player's current time, re-rendering only when the cue changes. */
         tick() {
             const track = this.track;
-            const cues = track && player?.getCurrentTime ? cuesAt(track.cues, player.getCurrentTime() - this.delay) : [];
+            const cues = track && player?.getCurrentTime ? cuesAt(track.cues, player.getCurrentTime()) : [];
             if (cues.length === shownCues.length && cues.every((cue, index) => cue === shownCues[index])) return;
             shownCues = cues;
             this.cueHtml = renderCues(cues);
@@ -419,24 +416,6 @@ document.addEventListener("alpine:init", () => {
             storage.set(STORAGE_KEYS.size, String(this.sizeIndex));
         },
 
-        /** @param {number} direction -1 shows subtitles earlier, 1 later */
-        bumpDelay(direction) {
-            const next = Math.round((this.delay + direction * DELAY_STEP_SECONDS) * 10) / 10;
-            this.delay = Math.min(Math.max(next, -DELAY_LIMIT_SECONDS), DELAY_LIMIT_SECONDS);
-            shownCues = [];
-            this.tick();
-        },
-
-        resetDelay() {
-            this.delay = 0;
-            shownCues = [];
-            this.tick();
-        },
-
-        get delayLabel() {
-            return `${this.delay > 0 ? "+" : ""}${this.delay.toFixed(1)} s`;
-        },
-
         /** @param {KeyboardEvent} event */
         onKeydown(event) {
             if (event.ctrlKey || event.metaKey || event.altKey || !player?.getCurrentTime) return;
@@ -456,13 +435,13 @@ document.addEventListener("alpine:init", () => {
                 case "]": {
                     const cues = this.track?.cues;
                     if (!cues?.length) return;
-                    const time = player.getCurrentTime() - this.delay;
+                    const time = player.getCurrentTime();
                     // Allow for the iframe reporting a slightly different time after a seek.
                     const cue = event.key === "["
                         ? cues.findLast((cue) => cue.start < time - 0.1)
                         : cues.find((cue) => cue.start > time + 0.1);
                     if (!cue) return;
-                    player.seekTo(Math.max(0, cue.start + this.delay), true);
+                    player.seekTo(cue.start, true);
                     break;
                 }
                 case "k":

@@ -108,17 +108,12 @@ test("bracket shortcuts seek to cue starts in the selected track", async () => {
         { key: "[", time: 6, expected: 1 },
         { key: "[", time: 1, expected: undefined },
         { key: "]", time: 22, expected: undefined },
-        { key: "]", time: 10, delay: 2, expected: 12 },
-        { key: "[", time: 12, delay: 2, expected: 3 },
-        { key: "]", time: 8, delay: -2, expected: 18 },
-        { key: "[", time: 0, delay: -2, expected: 0 },
         { key: "]", time: 0, trackId: "off", expected: undefined },
         { key: "]", time: 0, ctrlKey: true, expected: undefined },
     ]) {
         time = scenario.time;
         destination = undefined;
         app.trackId = scenario.trackId ?? "1";
-        app.delay = scenario.delay ?? 0;
         let prevented = false;
         app.onKeydown({
             key: scenario.key,
