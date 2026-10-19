@@ -2,8 +2,6 @@ package youtube
 
 import (
 	"context"
-	"io"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -249,39 +247,6 @@ func TestYtDlpDownloadAudioReportsTheError(t *testing.T) {
 	assert.ErrorContains(t, err, "Sign in to confirm")
 }
 
-func TestNextRun(t *testing.T) {
-	location := time.FixedZone("test", 3*3600)
-	for _, tc := range []struct{ now, want string }{
-		{"2026-10-18 01:00", "2026-10-18 03:00"},
-		{"2026-10-18 03:00", "2026-10-19 03:00"},
-		{"2026-10-18 23:59", "2026-10-19 03:00"},
-		{"2026-10-31 12:00", "2026-11-01 03:00"},
-	} {
-		now, err := time.ParseInLocation("2006-01-02 15:04", tc.now, location)
-		require.NoError(t, err)
-		assert.Equal(t, tc.want, nextRun(now, 3).Format("2006-01-02 15:04"), "from %s", tc.now)
-	}
-}
-
-func TestYtDlpUpdaterUpdatesEachRunUntilStopped(t *testing.T) {
-	ytdlp, log := newFakeYtDlp(t)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	ytdlp.now = func() time.Time { return time.Date(2026, 10, 18, 1, 0, 0, 0, time.UTC) }
-	waits := 0
-	ytdlp.wait = func(ctx context.Context, d time.Duration) error {
-		waits++
-		assert.Equal(t, 2*time.Hour, d)
-		if waits == 3 {
-			cancel()
-		}
-		return ctx.Err()
-	}
-
-	ytdlp.RunUpdater(ctx, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	assert.Equal(t, 2, strings.Count(readLog(t, log), "--update-to nightly"), "updates")
-}
-
 // newPathYtDlp returns a manager whose own copy is missing and whose PATH holds the fake yt-dlp and node.
 func newPathYtDlp(t *testing.T) (*YtDlp, string) {
 	t.Helper()
@@ -324,19 +289,5 @@ func TestYtDlpDoesNotUpdateTheOneInPath(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "2026.10.10", version)
 	assert.Contains(t, output, "from PATH")
-	assert.NotContains(t, readLog(t, log), "--update-to")
-
-	// the daily updater leaves it alone as well
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	ytdlp.now = func() time.Time { return time.Date(2026, 10, 18, 1, 0, 0, 0, time.UTC) }
-	waits := 0
-	ytdlp.wait = func(ctx context.Context, d time.Duration) error {
-		if waits++; waits == 2 {
-			cancel()
-		}
-		return ctx.Err()
-	}
-	ytdlp.RunUpdater(ctx, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	assert.NotContains(t, readLog(t, log), "--update-to")
 }

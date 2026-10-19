@@ -166,7 +166,6 @@ func run() error {
 		if err := ytdlp.Ensure(ctx); err != nil {
 			logger.Error("Couldn't install yt-dlp", "error", err)
 		}
-		ytdlp.RunUpdater(ctx, logger)
 	}()
 
 	serverErr := make(chan error, 1)

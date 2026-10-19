@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
 	"os"
 	"os/exec"
@@ -19,27 +18,22 @@ import (
 )
 
 const (
-	defaultYtDlpBaseURL = "https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/"
-	// ytDlpUpdateHour is the local hour at which yt-dlp is updated every day
-	ytDlpUpdateHour      = 3
+	defaultYtDlpBaseURL  = "https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/"
 	ytDlpDownloadTimeout = 5 * time.Minute
 	// killWaitDelay is how long a canceled yt-dlp may take to close its output before it is cut off
 	killWaitDelay = 2 * time.Second
 )
 
 // YtDlp runs yt-dlp. A yt-dlp found in PATH is preferred and left alone: whoever installed it updates it.
-// Otherwise it uses its own copy at path, which is downloaded when missing and kept up to date with nightly
-// builds, because YouTube changes often and stable releases lag behind.
+// Otherwise it uses its own copy at path, downloaded when missing and updated manually to nightly builds.
 type YtDlp struct {
 	path    string
 	baseURL string
 	http    *http.Client
 	// mutex keeps an update from replacing the binary while a download is using it
 	mutex sync.RWMutex
-	// lookPath, now and wait are replaced in tests
+	// lookPath is replaced in tests
 	lookPath func(file string) (string, error)
-	now      func() time.Time
-	wait     func(ctx context.Context, d time.Duration) error
 }
 
 // NewYtDlp uses the yt-dlp in PATH if there is one, else manages the binary at path.
@@ -49,17 +43,6 @@ func NewYtDlp(path string) *YtDlp {
 		baseURL:  defaultYtDlpBaseURL,
 		http:     &http.Client{Timeout: ytDlpDownloadTimeout},
 		lookPath: exec.LookPath,
-		now:      time.Now,
-		wait: func(ctx context.Context, d time.Duration) error {
-			timer := time.NewTimer(d)
-			defer timer.Stop()
-			select {
-			case <-timer.C:
-				return nil
-			case <-ctx.Done():
-				return ctx.Err()
-			}
-		},
 	}
 }
 
@@ -187,35 +170,6 @@ func (y *YtDlp) Update(ctx context.Context) (version, output string, err error) 
 	}
 	version, err = y.version(ctx)
 	return version, strings.TrimSpace(combined.String()), err
-}
-
-// nextRun is the next time the clock shows hour:00 after now.
-func nextRun(now time.Time, hour int) time.Time {
-	run := time.Date(now.Year(), now.Month(), now.Day(), hour, 0, 0, 0, now.Location())
-	if !run.After(now) {
-		run = time.Date(now.Year(), now.Month(), now.Day()+1, hour, 0, 0, 0, now.Location())
-	}
-	return run
-}
-
-// RunUpdater updates yt-dlp every day at ytDlpUpdateHour until ctx is done. A failed update is logged and
-// tried again the next day.
-func (y *YtDlp) RunUpdater(ctx context.Context, logger *slog.Logger) {
-	for {
-		if err := y.wait(ctx, nextRun(y.now(), ytDlpUpdateHour).Sub(y.now())); err != nil {
-			return
-		}
-		if path, fromPath := y.binary(); fromPath {
-			logger.Info("Not updating yt-dlp, using the one from PATH", "path", path)
-			continue
-		}
-		version, _, err := y.Update(ctx)
-		if err != nil {
-			logger.Error("yt-dlp update failed", "error", err)
-			continue
-		}
-		logger.Info("yt-dlp updated", "version", version)
-	}
 }
 
 // progressPrefix starts the progress lines that yt-dlp is asked to print, so they can't be mistaken for the file path.
