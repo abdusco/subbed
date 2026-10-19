@@ -342,34 +342,26 @@ func TestVideoAndSubtitleFlow(t *testing.T) {
 	assert.Equal(t, 400, app.do(http.MethodDelete, "/api/admin/videos/abc", nil, nil, true).Code)
 }
 
-func TestRequestLogShowsPathAsText(t *testing.T) {
+func TestRequestsAreNotLogged(t *testing.T) {
 	app := newTestApp(t)
 	app.do(http.MethodGet, "/?v=1", nil, nil, false)
+	app.do(http.MethodGet, "/static/app.js", nil, nil, false)
 	app.do(http.MethodGet, "/nope", nil, nil, false)
-
-	var entries []map[string]any
-	for _, line := range strings.Split(strings.TrimSpace(app.logs.String()), "\n") {
-		var entry map[string]any
-		require.NoError(t, json.Unmarshal([]byte(line), &entry), "log line is JSON: %q", line)
-		entries = append(entries, entry)
-	}
-	require.Len(t, entries, 2, app.logs.String())
-	assert.Equal(t, "/?v=1", entries[0]["path"])
-	assert.EqualValues(t, 200, entries[0]["status"])
-	assert.Equal(t, "INFO", entries[0]["level"])
-	assert.Equal(t, "/nope", entries[1]["path"])
-	assert.EqualValues(t, 404, entries[1]["status"])
-	assert.Equal(t, "WARN", entries[1]["level"])
+	assert.Zero(t, app.logs.Len(), "there is no access log: %s", app.logs.String())
 }
 
-func TestRequestLogSkipsStaticFiles(t *testing.T) {
-	app := newTestApp(t)
-	app.do(http.MethodGet, "/static/app.js", nil, nil, false)
-	app.do(http.MethodGet, "/admin-sw.js", nil, nil, false)
-	assert.Zero(t, app.logs.Len(), "successful static requests are not logged: %s", app.logs.String())
+func TestServerErrorsAreLogged(t *testing.T) {
+	// nothing listens on port 1, so the oEmbed lookup fails and the request ends in a 502
+	app := newTestAppWith(t, "http://127.0.0.1:1")
+	rec := app.do(http.MethodGet, "/api/admin/oembed?url=https://youtu.be/jNQXAC9IVRw", nil, nil, true)
+	require.Equal(t, http.StatusBadGateway, rec.Code, rec.Body.String())
 
-	app.do(http.MethodGet, "/static/missing.js", nil, nil, false)
-	assert.Contains(t, app.logs.String(), "/static/missing.js", "a failed static request is logged")
+	var entry map[string]any
+	require.NoError(t, json.Unmarshal(app.logs.Bytes(), &entry), "log line is JSON: %q", app.logs.String())
+	assert.Equal(t, "ERROR", entry["level"])
+	assert.Equal(t, "/api/admin/oembed", entry["path"])
+	assert.EqualValues(t, 502, entry["status"])
+	assert.NotEmpty(t, entry["error"])
 }
 
 func TestDebugEnabled(t *testing.T) {
