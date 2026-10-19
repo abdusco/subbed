@@ -12,16 +12,12 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode/utf8"
 
 	"subbed/internal/subtitle"
 	"subbed/internal/youtube"
 )
 
-const (
-	maxLogMessageRunes = 2000
-	retryClaimAfter    = 5 * time.Second
-)
+const retryClaimAfter = 5 * time.Second
 
 type logFunc = func(format string, args ...any)
 
@@ -215,7 +211,7 @@ func (j *JobRunner) run(ctx context.Context, job *Job) {
 		close(running.done)
 	}()
 
-	log := &jobLog{repo: j.repo, logger: j.logger, jobID: job.ID}
+	log := newJobLog(j.repo, j.logger, job.ID)
 	log.info(ctx, "Started: %s", job.VideoTitle)
 	var err error
 	switch job.Kind {
@@ -374,33 +370,4 @@ func uniqueLanguages(targets []string, source string) []string {
 		}
 	}
 	return unique
-}
-
-// jobLog writes a job's log to the database. A line that can't be saved is only reported to the server log.
-type jobLog struct {
-	repo   *Repository
-	logger *slog.Logger
-	jobID  int64
-}
-
-func (l *jobLog) add(ctx context.Context, level, message string) {
-	if utf8.RuneCountInString(message) > maxLogMessageRunes {
-		message = string([]rune(message)[:maxLogMessageRunes]) + "…"
-	}
-	if err := l.repo.AddJobLog(ctx, l.jobID, level, message); err != nil && ctx.Err() == nil {
-		l.logger.Warn("Couldn't save a job log line", "job", l.jobID, "error", err)
-	}
-}
-
-func (l *jobLog) info(ctx context.Context, format string, args ...any) {
-	l.add(ctx, logInfo, fmt.Sprintf(format, args...))
-}
-
-func (l *jobLog) error(ctx context.Context, format string, args ...any) {
-	l.add(ctx, logError, fmt.Sprintf(format, args...))
-}
-
-// writer returns a logf for tools that report progress; every line gets the prefix.
-func (l *jobLog) writer(ctx context.Context, prefix string) logFunc {
-	return func(format string, args ...any) { l.info(ctx, prefix+format, args...) }
 }

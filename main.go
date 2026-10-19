@@ -75,6 +75,7 @@ func debugEnabled() bool {
 func newLogger(debug bool) *slog.Logger {
 	options := &slog.HandlerOptions{Level: slog.LevelInfo}
 	if debug {
+		options.Level = slog.LevelDebug
 		return slog.New(slog.NewTextHandler(os.Stdout, options))
 	}
 	return slog.New(slog.NewJSONHandler(os.Stdout, options))
