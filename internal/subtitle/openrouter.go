@@ -29,6 +29,8 @@ type Client struct {
 	http    *http.Client
 	// backoff is how long to wait after a failed attempt (1-based); tests replace it
 	backoff func(attempt int) time.Duration
+	// Logf reports a failed attempt that is going to be retried; it may be nil
+	Logf func(format string, args ...any)
 }
 
 // NewClient uses the default endpoint when baseURL is empty.
@@ -65,15 +67,20 @@ func (c *Client) Post(ctx context.Context, path string, payload any) (Response, 
 	if err != nil {
 		return Response{}, err
 	}
+	attempt := 0
 	return retry(ctx, maxAttempts, c.backoff, func() (Response, bool, error) {
+		attempt++
 		response, err := c.send(ctx, path, body)
-		if err != nil {
-			return Response{}, true, err
+		if err == nil && !slices.Contains(retryStatuses, response.Status) {
+			return response, false, nil
 		}
-		if slices.Contains(retryStatuses, response.Status) {
-			return Response{}, true, &APIError{Status: response.Status, Body: string(response.Body)}
+		if err == nil {
+			err = &APIError{Status: response.Status, Body: string(response.Body)}
 		}
-		return response, false, nil
+		if c.Logf != nil && attempt < maxAttempts && ctx.Err() == nil {
+			c.Logf("OpenRouter request failed, retrying (attempt %d/%d): %v", attempt, maxAttempts, err)
+		}
+		return Response{}, true, err
 	})
 }
 

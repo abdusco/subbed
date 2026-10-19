@@ -3,6 +3,7 @@ package subtitle
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -52,6 +53,26 @@ func TestPostRetriesTransientStatuses(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "done", string(response.Body))
 	assert.EqualValues(t, 3, calls.Load())
+}
+
+func TestPostReportsRetries(t *testing.T) {
+	var calls atomic.Int32
+	client, server := newTestClient(func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) < 3 {
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		w.Write([]byte("done"))
+	})
+	defer server.Close()
+	var lines []string
+	client.Logf = func(format string, args ...any) { lines = append(lines, fmt.Sprintf(format, args...)) }
+
+	_, err := client.Post(context.Background(), "/x", map[string]string{})
+	require.NoError(t, err)
+	require.Len(t, lines, 2)
+	assert.Contains(t, lines[0], "attempt 1/5")
+	assert.Contains(t, lines[0], "429")
 }
 
 func TestPostReturnsClientErrorsWithoutRetrying(t *testing.T) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -98,6 +99,7 @@ func queueJob(c echo.Context, repo *Repository, runner *JobRunner, kind, source 
 	if err != nil {
 		return err
 	}
+	slog.Info("Queued job", "job", id, "kind", kind, "video", videoID, "source", source, "targets", targets)
 	runner.Notify()
 	job, err := repo.GetJob(ctx, id)
 	if err != nil {
@@ -137,6 +139,7 @@ func cancelJob(repo *Repository, runner *JobRunner) echo.HandlerFunc {
 		if err := stopJob(ctx, repo, runner, id); err != nil {
 			return err
 		}
+		slog.Info("Canceled job", "job", id)
 		if job, err = repo.GetJob(ctx, id); err != nil {
 			return err
 		}
@@ -162,6 +165,7 @@ func deleteJob(repo *Repository, runner *JobRunner) echo.HandlerFunc {
 		if !deleted {
 			return echo.NewHTTPError(http.StatusNotFound, "Job not found")
 		}
+		slog.Info("Deleted job", "job", id)
 		return c.JSON(http.StatusOK, map[string]any{"success": true})
 	}
 }

@@ -51,7 +51,9 @@ func (t aiTools) DownloadAudio(ctx context.Context, videoURL, directory, cookies
 }
 
 func (t aiTools) Transcribe(ctx context.Context, model, path, language string, progress progressFunc, logf logFunc) (subtitle.Transcript, error) {
-	transcriber := subtitle.NewTranscriber(subtitle.NewClient(t.apiKey, ""), model)
+	client := subtitle.NewClient(t.apiKey, "")
+	client.Logf = logf
+	transcriber := subtitle.NewTranscriber(client, model)
 	transcriber.Language = language
 	transcriber.Logf = logf
 	transcriber.Progress = progress
@@ -59,7 +61,9 @@ func (t aiTools) Transcribe(ctx context.Context, model, path, language string, p
 }
 
 func (t aiTools) Translate(ctx context.Context, model string, cues []subtitle.Cue, language string, progress progressFunc, logf logFunc) ([]subtitle.Cue, error) {
-	translator := subtitle.NewTranslator(subtitle.NewClient(t.apiKey, ""), model)
+	client := subtitle.NewClient(t.apiKey, "")
+	client.Logf = logf
+	translator := subtitle.NewTranslator(client, model)
 	translator.Logf = logf
 	translator.Progress = func(fraction float64) { progress(fraction, "") }
 	return translator.Translate(ctx, cues, language)
