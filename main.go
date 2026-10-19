@@ -21,6 +21,7 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 
+	"subbed/internal/logger"
 	"subbed/internal/youtube"
 )
 
@@ -209,13 +210,21 @@ func newServer(cfg serverConfig) *echo.Echo {
 	e := echo.New()
 	e.HideBanner = true
 	e.HidePort = true
-	e.HTTPErrorHandler = jsonErrorHandler(cfg.logger)
+	e.HTTPErrorHandler = jsonErrorHandler()
 	// c.File serves from here
 	e.Filesystem = cfg.assets
 
+	// handlers log with the logger in the request's context
+	e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			request := c.Request()
+			c.SetRequest(request.WithContext(logger.ToCtx(request.Context(), cfg.logger)))
+			return next(c)
+		}
+	})
 	e.Use(middleware.RecoverWithConfig(middleware.RecoverConfig{
 		LogErrorFunc: func(c echo.Context, err error, stack []byte) error {
-			cfg.logger.Error("Panic", "error", err, "path", c.Request().URL.Path, "stack", string(stack))
+			logger.FromCtx(c.Request().Context()).Error("Panic", "error", err, "path", c.Request().URL.Path, "stack", string(stack))
 			return err
 		},
 	}))
@@ -306,11 +315,12 @@ type errorResponse struct {
 
 // jsonErrorHandler answers errors with {"error": "message"}. Unexpected errors are reported as a generic
 // 500; this is where they are logged, with their details. Client errors (4xx) are not logged.
-func jsonErrorHandler(logger *slog.Logger) echo.HTTPErrorHandler {
+func jsonErrorHandler() echo.HTTPErrorHandler {
 	return func(err error, c echo.Context) {
 		if c.Response().Committed {
 			return
 		}
+		log := logger.FromCtx(c.Request().Context())
 		code := http.StatusInternalServerError
 		message := http.StatusText(code)
 		var httpError *echo.HTTPError
@@ -322,7 +332,7 @@ func jsonErrorHandler(logger *slog.Logger) echo.HTTPErrorHandler {
 			}
 		}
 		if code >= http.StatusInternalServerError {
-			logger.Error("Request failed",
+			log.Error("Request failed",
 				"method", c.Request().Method, "path", c.Request().URL.Path, "status", code, "error", err.Error())
 		}
 		var sendErr error
@@ -332,7 +342,7 @@ func jsonErrorHandler(logger *slog.Logger) echo.HTTPErrorHandler {
 			sendErr = c.JSON(code, errorResponse{Error: message})
 		}
 		if sendErr != nil {
-			logger.Error("Failed to send error response", "error", sendErr)
+			log.Error("Failed to send error response", "error", sendErr)
 		}
 	}
 }

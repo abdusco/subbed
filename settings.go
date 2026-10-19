@@ -4,7 +4,6 @@ import (
 	"cmp"
 	"context"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"strings"
 	"unicode/utf8"
@@ -12,6 +11,7 @@ import (
 	"github.com/doug-martin/goqu/v9"
 	"github.com/labstack/echo/v4"
 
+	"subbed/internal/logger"
 	"subbed/internal/subtitle"
 )
 
@@ -140,7 +140,7 @@ func updateSettings(repo *Repository) echo.HandlerFunc {
 			if err != nil {
 				return err
 			}
-			slog.Info("Changed setting", "key", setting.key, "value", model)
+			logger.FromCtx(ctx).Info("Changed setting", "key", setting.key, "value", model)
 		}
 
 		settings, err := readSettings(ctx, repo)

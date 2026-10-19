@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"subbed/internal/logger"
 )
 
 const (
@@ -36,8 +38,6 @@ type Transcriber struct {
 	ChunkMinutes float64
 	FFmpeg       string
 	FFprobe      string
-	// Logf reports what is happening; it may be nil
-	Logf func(format string, args ...any)
 	// Progress is called with how much of the work is done (0 to 1) and what is being done; it may be nil
 	Progress func(fraction float64, stage string)
 }
@@ -67,12 +67,6 @@ func NewTranscriber(client *Client, model string) *Transcriber {
 func (t *Transcriber) progress(fraction float64, stage string) {
 	if t.Progress != nil {
 		t.Progress(fraction, stage)
-	}
-}
-
-func (t *Transcriber) logf(format string, args ...any) {
-	if t.Logf != nil {
-		t.Logf(format, args...)
 	}
 }
 
@@ -140,7 +134,7 @@ func (t *Transcriber) Transcribe(ctx context.Context, path string) (Transcript, 
 	if err != nil {
 		return Transcript{}, err
 	}
-	t.logf("Extracted %d audio chunk(s)", len(chunks))
+	logger.FromCtx(ctx).Info(fmt.Sprintf("Extracted %d audio chunk(s)", len(chunks)))
 
 	// cutting the audio is quick next to transcribing it
 	const extractionShare = 0.05
@@ -154,10 +148,10 @@ func (t *Transcriber) Transcribe(ctx context.Context, path string) (Transcript, 
 			return Transcript{}, err
 		}
 		if duration < minChunkDuration {
-			t.logf("Skipping empty chunk %d/%d", position+1, len(chunks))
+			logger.FromCtx(ctx).Info(fmt.Sprintf("Skipping empty chunk %d/%d", position+1, len(chunks)))
 			continue
 		}
-		t.logf("Transcribing chunk %d/%d with %s", position+1, len(chunks), t.Model)
+		logger.FromCtx(ctx).Debug(fmt.Sprintf("Transcribing chunk %d/%d with %s", position+1, len(chunks), t.Model))
 		t.progress(extractionShare+(1-extractionShare)*float64(position)/float64(len(chunks)), fmt.Sprintf("Transcribing chunk %d/%d", position+1, len(chunks)))
 		result, err := t.transcribeChunk(ctx, chunk, duration)
 		if err != nil {
@@ -277,14 +271,14 @@ func (t *Transcriber) transcribeChunk(ctx context.Context, path string, duration
 		return chunkResult{}, err
 	}
 	if response.Status == 400 && t.diarizing() {
-		t.logf("The model doesn't take speaker labels (%.200s); continuing without them", response.Body)
+		logger.FromCtx(ctx).Warn(fmt.Sprintf("The model doesn't take speaker labels (%.200s); continuing without them", response.Body))
 		t.diarizeRejected = true
 		if response, err = t.Client.Post(ctx, "/audio/transcriptions", t.chunkRequest(audio, false)); err != nil {
 			return chunkResult{}, err
 		}
 	}
 	if response.Status == 400 {
-		t.logf("Model rejected verbose_json (%.200s); using a single cue per chunk", response.Body)
+		logger.FromCtx(ctx).Warn(fmt.Sprintf("Model rejected verbose_json (%.200s); using a single cue per chunk", response.Body))
 		if response, err = t.Client.Post(ctx, "/audio/transcriptions", t.chunkRequest(audio, true)); err != nil {
 			return chunkResult{}, err
 		}
@@ -322,7 +316,7 @@ func (t *Transcriber) transcribeChunk(ctx context.Context, path string, duration
 		result.segments = append(result.segments, Segment{Start: segment.Start, End: segment.End, Text: text, Speaker: label})
 	}
 	if t.diarizing() && !labelled {
-		t.logf("No speaker labels in the response; the model may not support them")
+		logger.FromCtx(ctx).Warn("No speaker labels in the response; the model may not support them")
 	}
 	if len(result.segments) > 0 {
 		return result, nil

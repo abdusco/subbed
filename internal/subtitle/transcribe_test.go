@@ -1,9 +1,10 @@
 package subtitle
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,6 +14,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"subbed/internal/logger"
 )
 
 // fakeMediaTools writes ffmpeg and ffprobe stand-ins: ffmpeg creates $CHUNKS mp3 chunks next to its last argument
@@ -134,10 +137,10 @@ func TestTranscribeContinuesWithoutSpeakerLabelsWhenTheModelRefusesThem(t *testi
 	}
 	segments := reply(`{"language":"en","segments":[{"start":0,"end":2,"text":"Hello there."}]}`)
 	transcriber, payloads := newTestTranscriber(t, "2", refused, segments, segments)
-	var logged []string
-	transcriber.Logf = func(format string, args ...any) { logged = append(logged, fmt.Sprintf(format, args...)) }
+	logs := &bytes.Buffer{}
+	ctx := logger.ToCtx(context.Background(), slog.New(slog.NewTextHandler(logs, nil)))
 
-	got, err := transcriber.Transcribe(context.Background(), "input.mp4")
+	got, err := transcriber.Transcribe(ctx, "input.mp4")
 	require.NoError(t, err)
 	assert.Equal(t, "1\n00:00:00,000 --> 00:00:02,000\nHello there.\n\n2\n00:00:10,000 --> 00:00:12,000\nHello there.\n", got.SRT)
 	assert.Equal(t, "en", got.Language)
@@ -148,12 +151,12 @@ func TestTranscribeContinuesWithoutSpeakerLabelsWhenTheModelRefusesThem(t *testi
 	assert.Equal(t, []any{"segment"}, (*payloads)[1]["timestamp_granularities"], "no word timestamps without speaker labels")
 	assert.NotContains(t, (*payloads)[2], "diarize")
 	var notices int
-	for _, line := range logged {
+	for _, line := range strings.Split(logs.String(), "\n") {
 		if strings.Contains(line, "speaker labels") {
 			notices++
 		}
 	}
-	assert.Equal(t, 1, notices, "the refusal is reported once: %q", logged)
+	assert.Equal(t, 1, notices, "the refusal is reported once: %s", logs.String())
 }
 
 func TestTranscribeKeepsSpeakerLabelsWhenTheModelSupportsThem(t *testing.T) {

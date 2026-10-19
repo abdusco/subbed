@@ -16,6 +16,8 @@ import (
 
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
+
+	"subbed/internal/logger"
 )
 
 const (
@@ -140,10 +142,10 @@ func (s *sessions) handleLogin(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "Invalid request")
 	}
 	if !s.checkCredentials(request.Username, request.Password) {
-		slog.Warn("Failed sign-in", "ip", c.RealIP())
+		logger.FromCtx(c.Request().Context()).Warn("Failed sign-in", "ip", c.RealIP())
 		return echo.NewHTTPError(http.StatusUnauthorized, "Invalid username or password")
 	}
-	slog.Info("Signed in", "ip", c.RealIP())
+	logger.FromCtx(c.Request().Context()).Info("Signed in", "ip", c.RealIP())
 	token, expires := s.issue()
 	s.setCookie(c, token, expires)
 	return c.NoContent(http.StatusNoContent)

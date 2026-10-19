@@ -15,6 +15,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"subbed/internal/logger"
 )
 
 const (
@@ -195,9 +197,9 @@ func parseProgress(line string) (fraction float64, ok bool) {
 }
 
 // DownloadAudio downloads the best audio of a video into directory and returns the file's path. cookiesFile may be
-// empty. progress is called with the fraction downloaded, and what yt-dlp prints besides that goes to logf line by
-// line (either may be nil).
-func (y *YtDlp) DownloadAudio(ctx context.Context, videoURL, directory, cookiesFile string, progress func(fraction float64), logf func(format string, args ...any)) (string, error) {
+// empty. progress is called with the fraction downloaded (it may be nil), and what yt-dlp prints besides that goes
+// to the context's logger line by line, at debug level.
+func (y *YtDlp) DownloadAudio(ctx context.Context, videoURL, directory, cookiesFile string, progress func(fraction float64)) (string, error) {
 	y.mutex.RLock()
 	defer y.mutex.RUnlock()
 
@@ -236,9 +238,7 @@ func (y *YtDlp) DownloadAudio(ctx context.Context, videoURL, directory, cookiesF
 		path = line
 	}}
 	stderr := &lineWriter{emit: func(line string) {
-		if logf != nil {
-			logf("%s", line)
-		}
+		logger.FromCtx(ctx).Debug("yt-dlp: " + line)
 	}}
 	executable, _ := y.binary()
 	command := exec.CommandContext(ctx, executable, arguments...)

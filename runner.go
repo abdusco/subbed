@@ -13,13 +13,12 @@ import (
 	"sync"
 	"time"
 
+	"subbed/internal/logger"
 	"subbed/internal/subtitle"
 	"subbed/internal/youtube"
 )
 
 const retryClaimAfter = 5 * time.Second
-
-type logFunc = func(format string, args ...any)
 
 // progressFunc reports how much of some work is done (0 to 1) and what it is doing. An empty stage keeps the last one.
 type progressFunc = func(fraction float64, stage string)
@@ -28,9 +27,9 @@ type progressFunc = func(fraction float64, stage string)
 type jobTools interface {
 	// Ready reports why jobs cannot run, e.g. a missing API key
 	Ready() error
-	DownloadAudio(ctx context.Context, videoURL, directory, cookiesFile string, progress progressFunc, logf logFunc) (string, error)
-	Transcribe(ctx context.Context, model, path, language string, progress progressFunc, logf logFunc) (subtitle.Transcript, error)
-	Translate(ctx context.Context, model string, cues []subtitle.Cue, language string, progress progressFunc, logf logFunc) ([]subtitle.Cue, error)
+	DownloadAudio(ctx context.Context, videoURL, directory, cookiesFile string, progress progressFunc) (string, error)
+	Transcribe(ctx context.Context, model, path, language string, progress progressFunc) (subtitle.Transcript, error)
+	Translate(ctx context.Context, model string, cues []subtitle.Cue, language string, progress progressFunc) ([]subtitle.Cue, error)
 }
 
 // aiTools downloads with yt-dlp and calls OpenRouter models.
@@ -46,25 +45,19 @@ func (t aiTools) Ready() error {
 	return nil
 }
 
-func (t aiTools) DownloadAudio(ctx context.Context, videoURL, directory, cookiesFile string, progress progressFunc, logf logFunc) (string, error) {
-	return t.ytdlp.DownloadAudio(ctx, videoURL, directory, cookiesFile, func(fraction float64) { progress(fraction, "") }, logf)
+func (t aiTools) DownloadAudio(ctx context.Context, videoURL, directory, cookiesFile string, progress progressFunc) (string, error) {
+	return t.ytdlp.DownloadAudio(ctx, videoURL, directory, cookiesFile, func(fraction float64) { progress(fraction, "") })
 }
 
-func (t aiTools) Transcribe(ctx context.Context, model, path, language string, progress progressFunc, logf logFunc) (subtitle.Transcript, error) {
-	client := subtitle.NewClient(t.apiKey, "")
-	client.Logf = logf
-	transcriber := subtitle.NewTranscriber(client, model)
+func (t aiTools) Transcribe(ctx context.Context, model, path, language string, progress progressFunc) (subtitle.Transcript, error) {
+	transcriber := subtitle.NewTranscriber(subtitle.NewClient(t.apiKey, ""), model)
 	transcriber.Language = language
-	transcriber.Logf = logf
 	transcriber.Progress = progress
 	return transcriber.Transcribe(ctx, path)
 }
 
-func (t aiTools) Translate(ctx context.Context, model string, cues []subtitle.Cue, language string, progress progressFunc, logf logFunc) ([]subtitle.Cue, error) {
-	client := subtitle.NewClient(t.apiKey, "")
-	client.Logf = logf
-	translator := subtitle.NewTranslator(client, model)
-	translator.Logf = logf
+func (t aiTools) Translate(ctx context.Context, model string, cues []subtitle.Cue, language string, progress progressFunc) ([]subtitle.Cue, error) {
+	translator := subtitle.NewTranslator(subtitle.NewClient(t.apiKey, ""), model)
 	translator.Progress = func(fraction float64) { progress(fraction, "") }
 	return translator.Translate(ctx, cues, language)
 }
@@ -202,6 +195,7 @@ func (j *JobRunner) Cancel(ctx context.Context, id int64) bool {
 // run works on a job. ctx ends when the server stops; the job's own context also ends when it is canceled, which
 // stops yt-dlp and ffmpeg and abandons the API calls. How the job ended is recorded with ctx, which still works then.
 func (j *JobRunner) run(ctx context.Context, job *Job) {
+	ctx = withJobLog(ctx, j.repo, j.logger, job.ID)
 	jobCtx, cancel := context.WithCancel(ctx)
 	running := &runningJob{id: job.ID, cancel: cancel, done: make(chan struct{})}
 	j.mutex.Lock()
@@ -215,14 +209,14 @@ func (j *JobRunner) run(ctx context.Context, job *Job) {
 		close(running.done)
 	}()
 
-	log := newJobLog(j.repo, j.logger, job.ID)
-	log.info(ctx, "Started: %s", job.VideoTitle)
+	log := logger.FromCtx(ctx)
+	log.Info("Started: " + job.VideoTitle)
 	var err error
 	switch job.Kind {
 	case jobTranscribe:
-		err = j.transcribe(jobCtx, job, log)
+		err = j.transcribe(jobCtx, job)
 	case jobTranslate:
-		err = j.translateExisting(jobCtx, job, log)
+		err = j.translateExisting(jobCtx, job)
 	default:
 		err = fmt.Errorf("unknown job kind %q", job.Kind)
 	}
@@ -234,12 +228,12 @@ func (j *JobRunner) run(ctx context.Context, job *Job) {
 	switch {
 	case jobCtx.Err() != nil && err != nil:
 		status = jobCanceled
-		log.info(ctx, "Canceled")
+		log.Info("Canceled")
 	case err != nil:
 		status, message = jobFailed, err.Error()
-		log.error(ctx, "Failed: %s", message)
+		log.Error("Failed: " + message)
 	default:
-		log.info(ctx, "Done")
+		log.Info("Done")
 	}
 	if err := j.repo.FinishJob(ctx, job.ID, status, message); err != nil {
 		j.logger.Error("Couldn't finish job", "job", job.ID, "error", err)
@@ -247,7 +241,8 @@ func (j *JobRunner) run(ctx context.Context, job *Job) {
 }
 
 // transcribe downloads the video's audio, transcribes it and stores the subtitle in the spoken language.
-func (j *JobRunner) transcribe(ctx context.Context, job *Job, log *jobLog) error {
+func (j *JobRunner) transcribe(ctx context.Context, job *Job) error {
+	log := logger.FromCtx(ctx)
 	video, err := j.repo.GetVideoByID(ctx, job.VideoID)
 	if err != nil {
 		return fmt.Errorf("couldn't load the video: %w", err)
@@ -269,29 +264,29 @@ func (j *JobRunner) transcribe(ctx context.Context, job *Job, log *jobLog) error
 	}
 	defer cleanup()
 	if cookiesFile == "" {
-		log.info(ctx, "No cookies stored; downloading as a signed-out visitor")
+		log.Info("No cookies stored; downloading as a signed-out visitor")
 	}
 
 	// downloading takes the first third of the job, transcribing the rest
 	const downloadShare = 0.35
 	progress := &jobProgress{repo: j.repo, logger: j.logger, jobID: job.ID}
 	progress.set(ctx, 0, "Downloading audio")
-	log.info(ctx, "Downloading the audio")
+	log.Info("Downloading the audio")
 	audio, err := j.tools.DownloadAudio(ctx, "https://www.youtube.com/watch?v="+videoID, directory, cookiesFile,
-		progress.span(ctx, 0, downloadShare, "Downloading audio"), log.writer(ctx, "yt-dlp: "))
+		progress.span(ctx, 0, downloadShare, "Downloading audio"))
 	if err != nil {
 		return err
 	}
-	log.info(ctx, "Downloaded %s", audio[strings.LastIndex(audio, "/")+1:])
+	log.Info("Downloaded " + audio[strings.LastIndex(audio, "/")+1:])
 
 	model, err := j.repo.transcribeModel(ctx)
 	if err != nil {
 		return err
 	}
-	log.info(ctx, "Transcribing with %s", model)
+	log.Info("Transcribing with " + model)
 	progress.set(ctx, downloadShare, "Transcribing")
 	transcript, err := j.tools.Transcribe(ctx, model, audio, job.SourceLanguage,
-		progress.span(ctx, downloadShare, 1, "Transcribing"), log.writer(ctx, ""))
+		progress.span(ctx, downloadShare, 1, "Transcribing"))
 	if err != nil {
 		return fmt.Errorf("transcription failed: %w", err)
 	}
@@ -299,7 +294,7 @@ func (j *JobRunner) transcribe(ctx context.Context, job *Job, log *jobLog) error
 	source := job.SourceLanguage
 	if source == "" {
 		source = strings.ToLower(strings.TrimSpace(transcript.Language))
-		log.info(ctx, "The model detected the language %q", source)
+		log.Info(fmt.Sprintf("The model detected the language %q", source))
 	}
 	if !languageCodePattern.MatchString(source) {
 		return fmt.Errorf("couldn't tell the spoken language (the model said %q); set the source language and try again", source)
@@ -307,13 +302,14 @@ func (j *JobRunner) transcribe(ctx context.Context, job *Job, log *jobLog) error
 	if err := j.repo.SaveSubtitle(ctx, video.ID, source, "srt", transcript.SRT); err != nil {
 		return err
 	}
-	log.info(ctx, "Saved the %s subtitle (%d cues)", source, transcript.Cues)
+	log.Info(fmt.Sprintf("Saved the %s subtitle (%d cues)", source, transcript.Cues))
 	return nil
 }
 
 // translateExisting translates one of the video's subtitles into each target language. A failed translation does
 // not stop the others; the job then fails at the end.
-func (j *JobRunner) translateExisting(ctx context.Context, job *Job, log *jobLog) error {
+func (j *JobRunner) translateExisting(ctx context.Context, job *Job) error {
+	log := logger.FromCtx(ctx)
 	source, err := j.repo.GetSubtitle(ctx, job.VideoID, job.SourceLanguage)
 	if errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("the video has no %s subtitle to translate", job.SourceLanguage)
@@ -321,7 +317,7 @@ func (j *JobRunner) translateExisting(ctx context.Context, job *Job, log *jobLog
 	if err != nil {
 		return err
 	}
-	log.info(ctx, "Translating the %s subtitle", source.Language)
+	log.Info(fmt.Sprintf("Translating the %s subtitle", source.Language))
 
 	// each language takes an equal part of the job
 	progress := &jobProgress{repo: j.repo, logger: j.logger, jobID: job.ID}
@@ -331,8 +327,8 @@ func (j *JobRunner) translateExisting(ctx context.Context, job *Job, log *jobLog
 		part := progress.span(ctx, float64(position)/float64(len(targets)), float64(position+1)/float64(len(targets)),
 			fmt.Sprintf("Translating to %s", languageName(target)))
 		part(0, "")
-		if err := j.translate(ctx, job.VideoID, source.Content, target, part, log); err != nil {
-			log.error(ctx, "Translating to %s failed: %v", target, err)
+		if err := j.translate(ctx, job.VideoID, source.Content, target, part); err != nil {
+			log.Error(fmt.Sprintf("Translating to %s failed: %v", target, err))
 			failed = append(failed, target)
 		}
 		part(1, "")
@@ -343,25 +339,26 @@ func (j *JobRunner) translateExisting(ctx context.Context, job *Job, log *jobLog
 	return nil
 }
 
-func (j *JobRunner) translate(ctx context.Context, videoID int, srt, target string, progress progressFunc, log *jobLog) error {
+func (j *JobRunner) translate(ctx context.Context, videoID int, srt, target string, progress progressFunc) error {
+	log := logger.FromCtx(ctx)
 	cues, err := subtitle.ParseSRT(srt)
 	if err != nil {
 		return err
 	}
-	log.info(ctx, "Translating %d cues to %s", len(cues), languageName(target))
+	log.Info(fmt.Sprintf("Translating %d cues to %s", len(cues), languageName(target)))
 	model, err := j.repo.translateModel(ctx)
 	if err != nil {
 		return err
 	}
-	log.info(ctx, "Translating with %s", model)
-	translated, err := j.tools.Translate(ctx, model, cues, languageName(target), progress, log.writer(ctx, ""))
+	log.Info("Translating with " + model)
+	translated, err := j.tools.Translate(ctx, model, cues, languageName(target), progress)
 	if err != nil {
 		return err
 	}
 	if err := j.repo.SaveSubtitle(ctx, videoID, target, "srt", subtitle.RenderSRT(translated)); err != nil {
 		return err
 	}
-	log.info(ctx, "Saved the %s subtitle", target)
+	log.Info("Saved the " + target + " subtitle")
 	return nil
 }
 

@@ -21,6 +21,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"subbed/internal/logger"
 	"subbed/internal/subtitle"
 )
 
@@ -29,7 +30,7 @@ const testSRT = "1\n00:00:01,000 --> 00:00:02,000\nHello\n\n2\n00:00:03,000 --> 
 // fakeTools stands in for yt-dlp and OpenRouter. Each hook has a working default.
 type fakeTools struct {
 	ready      error
-	download   func(ctx context.Context, videoURL, cookiesFile string, progress progressFunc, logf logFunc) (string, error)
+	download   func(ctx context.Context, videoURL, cookiesFile string, progress progressFunc) (string, error)
 	transcribe func(ctx context.Context, model, language string, progress progressFunc) (subtitle.Transcript, error)
 	translate  func(ctx context.Context, cues []subtitle.Cue, language string, progress progressFunc) ([]subtitle.Cue, error)
 
@@ -45,7 +46,7 @@ type fakeTools struct {
 
 func (f *fakeTools) Ready() error { return f.ready }
 
-func (f *fakeTools) DownloadAudio(ctx context.Context, videoURL, directory, cookiesFile string, progress progressFunc, logf logFunc) (string, error) {
+func (f *fakeTools) DownloadAudio(ctx context.Context, videoURL, directory, cookiesFile string, progress progressFunc) (string, error) {
 	f.mutex.Lock()
 	f.downloads = append(f.downloads, videoURL)
 	f.cookiesFile = cookiesFile
@@ -55,14 +56,14 @@ func (f *fakeTools) DownloadAudio(ctx context.Context, videoURL, directory, cook
 	}
 	f.mutex.Unlock()
 	if f.download != nil {
-		return f.download(ctx, videoURL, cookiesFile, progress, logf)
+		return f.download(ctx, videoURL, cookiesFile, progress)
 	}
-	logf("[youtube] Downloading webpage")
+	logger.FromCtx(ctx).Debug("yt-dlp: [youtube] Downloading webpage")
 	progress(1, "")
 	return directory + "/abc.opus", nil
 }
 
-func (f *fakeTools) Transcribe(ctx context.Context, model, path, language string, progress progressFunc, logf logFunc) (subtitle.Transcript, error) {
+func (f *fakeTools) Transcribe(ctx context.Context, model, path, language string, progress progressFunc) (subtitle.Transcript, error) {
 	f.mutex.Lock()
 	f.models = append(f.models, model)
 	f.languages = append(f.languages, language)
@@ -70,12 +71,12 @@ func (f *fakeTools) Transcribe(ctx context.Context, model, path, language string
 	if f.transcribe != nil {
 		return f.transcribe(ctx, model, language, progress)
 	}
-	logf("Transcribing chunk 1/1")
+	logger.FromCtx(ctx).Debug("Transcribing chunk 1/1")
 	progress(1, "Transcribing chunk 1/1")
 	return subtitle.Transcript{SRT: testSRT, Language: "en", Cues: 2}, nil
 }
 
-func (f *fakeTools) Translate(ctx context.Context, model string, cues []subtitle.Cue, language string, progress progressFunc, logf logFunc) ([]subtitle.Cue, error) {
+func (f *fakeTools) Translate(ctx context.Context, model string, cues []subtitle.Cue, language string, progress progressFunc) ([]subtitle.Cue, error) {
 	f.mutex.Lock()
 	f.translated = append(f.translated, language)
 	f.translateModels = append(f.translateModels, model)
@@ -246,7 +247,7 @@ func TestTranscribeFailures(t *testing.T) {
 		want  string
 	}{
 		"download": {
-			&fakeTools{download: func(context.Context, string, string, progressFunc, logFunc) (string, error) {
+			&fakeTools{download: func(context.Context, string, string, progressFunc) (string, error) {
 				return "", errors.New("yt-dlp failed: Sign in to confirm you're not a bot")
 			}},
 			"Sign in to confirm",
@@ -550,7 +551,7 @@ func TestTranscribeJobShowsProgressWhileItRuns(t *testing.T) {
 	}
 	var jobID int64
 	tools := &fakeTools{
-		download: func(ctx context.Context, _, _ string, progress progressFunc, _ logFunc) (string, error) {
+		download: func(ctx context.Context, _, _ string, progress progressFunc) (string, error) {
 			snapshot(t, jobID)
 			progress(0.4, "")
 			snapshot(t, jobID)
@@ -643,7 +644,7 @@ func startRunner(t *testing.T, runner *JobRunner) {
 func blockingDownloads() (tools *fakeTools, started, canceled chan struct{}) {
 	started, canceled = make(chan struct{}, 8), make(chan struct{}, 8)
 	var calls atomic.Int32
-	tools = &fakeTools{download: func(ctx context.Context, _, _ string, _ progressFunc, _ logFunc) (string, error) {
+	tools = &fakeTools{download: func(ctx context.Context, _, _ string, _ progressFunc) (string, error) {
 		started <- struct{}{}
 		if calls.Add(1) > 1 {
 			return "/tmp/audio.opus", nil
@@ -837,7 +838,7 @@ func TestRunnerPicksUpJobsAddedWhileRunning(t *testing.T) {
 
 func TestStoppingTheServerLeavesARunningJobForRecovery(t *testing.T) {
 	started := make(chan struct{})
-	tools := &fakeTools{download: func(ctx context.Context, _, _ string, _ progressFunc, _ logFunc) (string, error) {
+	tools := &fakeTools{download: func(ctx context.Context, _, _ string, _ progressFunc) (string, error) {
 		close(started)
 		<-ctx.Done()
 		return "", ctx.Err()

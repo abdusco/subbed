@@ -1,17 +1,21 @@
 package subtitle
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"subbed/internal/logger"
 )
 
 func newTestClient(handler http.HandlerFunc) (*Client, *httptest.Server) {
@@ -65,12 +69,14 @@ func TestPostReportsRetries(t *testing.T) {
 		w.Write([]byte("done"))
 	})
 	defer server.Close()
-	var lines []string
-	client.Logf = func(format string, args ...any) { lines = append(lines, fmt.Sprintf(format, args...)) }
+	logs := &bytes.Buffer{}
+	ctx := logger.ToCtx(context.Background(), slog.New(slog.NewTextHandler(logs, nil)))
 
-	_, err := client.Post(context.Background(), "/x", map[string]string{})
+	_, err := client.Post(ctx, "/x", map[string]string{})
 	require.NoError(t, err)
+	lines := strings.Split(strings.TrimSpace(logs.String()), "\n")
 	require.Len(t, lines, 2)
+	assert.Contains(t, lines[0], "level=WARN")
 	assert.Contains(t, lines[0], "attempt 1/5")
 	assert.Contains(t, lines[0], "429")
 }

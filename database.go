@@ -4,11 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"log/slog"
 
 	"github.com/doug-martin/goqu/v9"
 	_ "github.com/doug-martin/goqu/v9/dialect/sqlite3"
 	_ "modernc.org/sqlite"
+
+	"subbed/internal/logger"
 )
 
 // Repository handles all database operations
@@ -226,7 +227,7 @@ func (r *Repository) ListAllVideos(ctx context.Context) ([]VideoWithSubs, error)
 			ScanStructsContext(ctx, &subtitles)
 
 		if err != nil {
-			slog.Warn("Failed to get subtitles for video",
+			logger.FromCtx(ctx).Warn("Failed to get subtitles for video",
 				"video_id", video.ID,
 				"error", err)
 			subtitles = []Subtitle{}

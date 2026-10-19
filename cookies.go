@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"os"
 	"sort"
@@ -12,6 +11,8 @@ import (
 
 	"github.com/doug-martin/goqu/v9"
 	"github.com/labstack/echo/v4"
+
+	"subbed/internal/logger"
 )
 
 const (
@@ -246,7 +247,7 @@ func saveCookies(repo *Repository) echo.HandlerFunc {
 		if err != nil {
 			return err
 		}
-		slog.Info("Saved cookies", "imported", len(cookies), "stored", len(stored))
+		logger.FromCtx(ctx).Info("Saved cookies", "imported", len(cookies), "stored", len(stored))
 		return c.JSON(http.StatusOK, summarizeCookies(stored))
 	}
 }
@@ -256,7 +257,7 @@ func deleteCookies(repo *Repository) echo.HandlerFunc {
 		if err := repo.DeleteCookies(c.Request().Context()); err != nil {
 			return err
 		}
-		slog.Info("Deleted cookies")
+		logger.FromCtx(c.Request().Context()).Info("Deleted cookies")
 		return c.JSON(http.StatusOK, cookieSummary{Domains: []string{}})
 	}
 }

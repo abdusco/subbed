@@ -10,6 +10,8 @@ import (
 	"sync/atomic"
 
 	"github.com/sourcegraph/conc/pool"
+
+	"subbed/internal/logger"
 )
 
 const (
@@ -40,8 +42,6 @@ type Translator struct {
 	BatchSize int
 	// Workers is the number of parallel requests
 	Workers int
-	// Logf reports what is happening; it may be nil
-	Logf func(format string, args ...any)
 	// Progress is called with the fraction of the batches that are done, once per finished batch. It is called
 	// from several goroutines at a time and may be nil.
 	Progress func(fraction float64)
@@ -50,12 +50,6 @@ type Translator struct {
 // NewTranslator returns a Translator with batches of 20 cues and 8 parallel requests.
 func NewTranslator(client *Client, model string) *Translator {
 	return &Translator{Client: client, Model: model, BatchSize: 20, Workers: 8}
-}
-
-func (t *Translator) logf(format string, args ...any) {
-	if t.Logf != nil {
-		t.Logf(format, args...)
-	}
 }
 
 // Translate translates the cues into language (a name the model understands, such as "Turkish"). The result has
@@ -80,7 +74,7 @@ func (t *Translator) Translate(ctx context.Context, cues []Cue, language string)
 	var finished atomic.Int32
 	for position, batch := range batches {
 		workers.Go(func(ctx context.Context) error {
-			t.logf("Translating cues %d-%d of %d with %s", batch.start+1, batch.end, len(cues), t.Model)
+			logger.FromCtx(ctx).Debug(fmt.Sprintf("Translating cues %d-%d of %d with %s", batch.start+1, batch.end, len(cues), t.Model))
 			texts, err := t.translateBatch(ctx, cues[batch.start:batch.end],
 				cues[max(0, batch.start-contextCues):batch.start], cues[batch.end:min(batch.end+contextCues, len(cues))], language)
 			translations[position] = texts
@@ -156,7 +150,7 @@ func (t *Translator) translateBatch(ctx context.Context, cues, before, after []C
 			}
 		}
 		lastProblem = err.Error()
-		t.logf("Invalid response (%s), attempt %d/%d", lastProblem, attempt, maxValidationAttempts)
+		logger.FromCtx(ctx).Warn(fmt.Sprintf("Invalid response (%s), attempt %d/%d", lastProblem, attempt, maxValidationAttempts))
 	}
 	return nil, fmt.Errorf("batch starting at cue %d failed: %s", cues[0].Index, lastProblem)
 }

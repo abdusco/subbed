@@ -4,27 +4,28 @@ import (
 	"bytes"
 	"context"
 	"log/slog"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"subbed/internal/logger"
 )
 
 func TestJobLogGoesToTheDatabaseAndTheServerLog(t *testing.T) {
-	ctx := context.Background()
 	app, _ := newJobApp(t, &fakeTools{})
 	videoID := addTestVideo(t, app)
-	id, err := app.repo.CreateJob(ctx, jobTranscribe, videoID, nil, "")
+	id, err := app.repo.CreateJob(context.Background(), jobTranscribe, videoID, nil, "")
 	require.NoError(t, err)
 
 	server := &bytes.Buffer{}
-	log := newJobLog(app.repo, slog.New(slog.NewTextHandler(server, nil)), id)
-	log.info(ctx, "Downloading %s", "audio")
-	log.writer(ctx, "yt-dlp: ")("50%%")
-	log.error(ctx, "Failed: %s", "boom")
+	ctx := withJobLog(context.Background(), app.repo, slog.New(slog.NewTextHandler(server, nil)), id)
+	log := logger.FromCtx(ctx)
+	log.Info("Downloading audio")
+	log.Debug("yt-dlp: 50%")
+	log.Error("Failed: boom")
 
-	lines, err := app.repo.ListJobLogs(ctx, id, 0, 10)
+	lines, err := app.repo.ListJobLogs(context.Background(), id, 0, 10)
 	require.NoError(t, err)
 	require.Len(t, lines, 3)
 	assert.Equal(t, []string{"Downloading audio", "yt-dlp: 50%", "Failed: boom"},
@@ -35,5 +36,5 @@ func TestJobLogGoesToTheDatabaseAndTheServerLog(t *testing.T) {
 	assert.Contains(t, server.String(), `msg="Downloading audio" job=`)
 	assert.Contains(t, server.String(), "level=ERROR")
 	assert.NotContains(t, server.String(), "yt-dlp")
-	assert.Equal(t, 2, strings.Count(server.String(), "\n"))
+	assert.Equal(t, 2, bytes.Count(server.Bytes(), []byte("\n")))
 }

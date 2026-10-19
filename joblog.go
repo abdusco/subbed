@@ -2,38 +2,20 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"unicode/utf8"
+
+	"subbed/internal/logger"
 )
 
 const maxLogMessageRunes = 2000
 
-// jobLog is the log of one job. Lines go to the server log and, through jobLogSink, to the job's own log in the
-// database, which the admin page shows.
-type jobLog struct {
-	logger *slog.Logger
-}
-
-func newJobLog(repo *Repository, server *slog.Logger, jobID int64) *jobLog {
+// withJobLog returns a context whose logger writes to the server log, with the job's id, and to the job's own log
+// in the database through jobLogSink, which the admin page shows. Debug lines (yt-dlp output, every batch of cues)
+// are in the job's log but only show in the server log with DEBUG=1.
+func withJobLog(ctx context.Context, repo *Repository, server *slog.Logger, jobID int64) context.Context {
 	sink := &jobLogSink{repo: repo, server: server, jobID: jobID}
-	return &jobLog{logger: slog.New(teeHandler{server.Handler(), sink}).With("job", jobID)}
-}
-
-func (l *jobLog) info(ctx context.Context, format string, args ...any) {
-	l.logger.InfoContext(ctx, fmt.Sprintf(format, args...))
-}
-
-func (l *jobLog) error(ctx context.Context, format string, args ...any) {
-	l.logger.ErrorContext(ctx, fmt.Sprintf(format, args...))
-}
-
-// writer returns a logf for tools that report progress; every line gets the prefix. Their chatter (yt-dlp output,
-// every batch of cues) is in the job's log but, being debug level, only shows in the server log with DEBUG=1.
-func (l *jobLog) writer(ctx context.Context, prefix string) logFunc {
-	return func(format string, args ...any) {
-		l.logger.DebugContext(ctx, fmt.Sprintf(prefix+format, args...))
-	}
+	return logger.ToCtx(ctx, slog.New(teeHandler{server.Handler(), sink}).With("job", jobID))
 }
 
 // jobLogSink is a slog.Handler that stores records in a job's log in the database. Attributes are not stored; the
