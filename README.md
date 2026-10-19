@@ -111,6 +111,8 @@ Below the video you can:
 - **Shift the timing** in half-second steps if the subtitles run early or late. Click the value to reset it.
 - Go **fullscreen** with the subtitles still visible.
 
+Press `[` or `]` to seek to the previous or next cue start in the selected subtitle track. These shortcuts account for the subtitle timing offset.
+
 If a video has no subtitles in your library, it still plays, using YouTube's own captions when available.
 
 ### Install the admin page as an app

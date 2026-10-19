@@ -452,6 +452,19 @@ document.addEventListener("alpine:init", () => {
                 case "l":
                     player.seekTo(player.getCurrentTime() + SKIP_SECONDS, true);
                     break;
+                case "[":
+                case "]": {
+                    const cues = this.track?.cues;
+                    if (!cues?.length) return;
+                    const time = player.getCurrentTime() - this.delay;
+                    // Allow for the iframe reporting a slightly different time after a seek.
+                    const cue = event.key === "["
+                        ? cues.findLast((cue) => cue.start < time - 0.1)
+                        : cues.find((cue) => cue.start > time + 0.1);
+                    if (!cue) return;
+                    player.seekTo(Math.max(0, cue.start + this.delay), true);
+                    break;
+                }
                 case "k":
                     // @ts-ignore
                     if (player.getPlayerState() === YT.PlayerState.PLAYING) player.pauseVideo();
