@@ -4,7 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"strings"
+	"net/url"
 
 	"github.com/doug-martin/goqu/v9"
 	_ "github.com/doug-martin/goqu/v9/dialect/sqlite3"
@@ -24,35 +24,39 @@ type VideoWithSubs struct {
 	Subtitles []Subtitle `json:"subtitles"`
 }
 
+// sqlitePragmas are set on every connection when it opens, in this order. Many of them (foreign_keys, busy_timeout,
+// synchronous, ...) apply to one connection only, so a PRAGMA statement run once would miss the rest of the pool;
+// without foreign_keys, deleting a job or video could leave its logs, jobs and subtitles behind.
+var sqlitePragmas = []struct{ name, value string }{
+	// these two only take effect when the database is created, so they come before journal_mode writes anything
+	{"page_size", "4096"},
+	{"auto_vacuum", "INCREMENTAL"},
+	{"journal_mode", "WAL"},            // Write-Ahead Logging for better concurrency
+	{"synchronous", "NORMAL"},          // Balanced durability/performance
+	{"cache_size", "-64000"},           // 64MB cache
+	{"busy_timeout", "5000"},           // 5 second timeout for locked database
+	{"foreign_keys", "1"},              // Enforce foreign key constraints
+	{"temp_store", "MEMORY"},           // Store temp tables in memory
+	{"mmap_size", "268435456"},         // 256MB memory-mapped I/O
+	{"journal_size_limit", "67108864"}, // 64MB journal size limit
+	{"wal_autocheckpoint", "1000"},     // Checkpoint every 1000 pages
+}
+
+// sqliteDSN returns the connection string for the database file at path, with the pragmas.
+func sqliteDSN(path string) string {
+	query := url.Values{}
+	for _, pragma := range sqlitePragmas {
+		query.Add("_pragma", pragma.name+"("+pragma.value+")")
+	}
+	// OmitHost keeps a relative path as "file:./x.db"; the URL escapes characters such as ? and # in the path
+	return (&url.URL{Scheme: "file", OmitHost: true, Path: path, RawQuery: query.Encode()}).String()
+}
+
 // NewRepository creates a new repository instance
 func NewRepository(dbPath string) (*Repository, error) {
-	// foreign_keys and busy_timeout apply to one connection only, so they are set for every connection of the
-	// pool here, not with PRAGMA statements below. Without foreign_keys, deleting a job or video could leave its
-	// logs, jobs and subtitles behind.
-	dsn := "file:" + strings.NewReplacer("%", "%25", "?", "%3f", "#", "%23").Replace(dbPath) +
-		"?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)"
-	sqlDB, err := sql.Open("sqlite", dsn)
+	sqlDB, err := sql.Open("sqlite", sqliteDSN(dbPath))
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
-	}
-
-	// Set good SQLite pragmas for performance and reliability
-	pragmas := []string{
-		"PRAGMA journal_mode=WAL",            // Write-Ahead Logging for better concurrency
-		"PRAGMA synchronous=NORMAL",          // Balanced durability/performance
-		"PRAGMA cache_size=-64000",           // 64MB cache
-		"PRAGMA temp_store=MEMORY",           // Store temp tables in memory
-		"PRAGMA mmap_size=268435456",         // 256MB memory-mapped I/O
-		"PRAGMA page_size=4096",              // 4KB page size (must be set before DB creation)
-		"PRAGMA auto_vacuum=INCREMENTAL",     // Incremental auto-vacuum
-		"PRAGMA journal_size_limit=67108864", // 64MB journal size limit
-		"PRAGMA wal_autocheckpoint=1000",     // Checkpoint every 1000 pages
-	}
-
-	for _, pragma := range pragmas {
-		if _, err := sqlDB.Exec(pragma); err != nil {
-			return nil, fmt.Errorf("failed to set pragma %s: %w", pragma, err)
-		}
 	}
 
 	db := goqu.New("sqlite3", sqlDB)

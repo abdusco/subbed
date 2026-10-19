@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -15,6 +17,45 @@ func newTestRepository(t *testing.T) *Repository {
 	require.NoError(t, err)
 	t.Cleanup(func() { repo.Close() })
 	return repo
+}
+
+func TestEveryConnectionGetsThePragmas(t *testing.T) {
+	ctx := context.Background()
+	// a path with characters that would end the path of a URL
+	path := filepath.Join(t.TempDir(), "a#b?c%d.db")
+	repo, err := NewRepository(path)
+	require.NoError(t, err)
+	assert.FileExists(t, path, "the database is at the path as given")
+	t.Cleanup(func() { repo.Close() })
+	pool := repo.db.Db.(*sql.DB)
+
+	// holding the connections at once makes the pool open a new one for each
+	var conns []*sql.Conn
+	for range 3 {
+		conn, err := pool.Conn(ctx)
+		require.NoError(t, err)
+		defer conn.Close()
+		conns = append(conns, conn)
+	}
+	for _, conn := range conns {
+		var foreignKeys, busyTimeout int
+		require.NoError(t, conn.QueryRowContext(ctx, "PRAGMA foreign_keys").Scan(&foreignKeys))
+		require.NoError(t, conn.QueryRowContext(ctx, "PRAGMA busy_timeout").Scan(&busyTimeout))
+		assert.Equal(t, 1, foreignKeys)
+		assert.Equal(t, 5000, busyTimeout)
+	}
+
+	var mode string
+	require.NoError(t, pool.QueryRowContext(ctx, "PRAGMA journal_mode").Scan(&mode))
+	assert.Equal(t, "wal", mode)
+	var autoVacuum int
+	require.NoError(t, pool.QueryRowContext(ctx, "PRAGMA auto_vacuum").Scan(&autoVacuum))
+	assert.Equal(t, 2, autoVacuum, "incremental, which only works when set before the first write")
+}
+
+func TestSQLiteDSNKeepsRelativePathsRelative(t *testing.T) {
+	assert.True(t, strings.HasPrefix(sqliteDSN("./subbed.db"), "file:./subbed.db?_pragma="), sqliteDSN("./subbed.db"))
+	assert.True(t, strings.HasPrefix(sqliteDSN("subbed.db"), "file:subbed.db?_pragma="), sqliteDSN("subbed.db"))
 }
 
 func TestSaveSubtitleReplacesSameLanguage(t *testing.T) {
