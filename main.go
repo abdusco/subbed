@@ -212,7 +212,6 @@ func newServer(cfg serverConfig) *echo.Echo {
 	// c.File serves from here
 	e.Filesystem = cfg.assets
 
-	e.Use(requestLogger(cfg.logger))
 	e.Use(middleware.RecoverWithConfig(middleware.RecoverConfig{
 		LogErrorFunc: func(c echo.Context, err error, stack []byte) error {
 			cfg.logger.Error("Panic", "error", err, "path", c.Request().URL.Path, "stack", string(stack))
@@ -234,7 +233,7 @@ func newServer(cfg serverConfig) *echo.Echo {
 
 	e.GET("/admin", servePage(adminOnlyFile), adminPage)
 	// the service worker must live outside /static so its scope can cover /admin
-	e.GET("/admin-sw.js", servePage("admin-sw.js"), quiet)
+	e.GET("/admin-sw.js", servePage("admin-sw.js"))
 
 	admin := e.Group("/api/admin", adminAPI)
 	admin.GET("/videos", listVideos(cfg.repo))
@@ -265,7 +264,7 @@ func newServer(cfg serverConfig) *echo.Echo {
 		admin.POST("/yt-dlp/update", ytDlpUpdate(cfg.ytdlp))
 	}
 
-	e.GET("/static/*", serveStatic(cfg.debug), quiet)
+	e.GET("/static/*", serveStatic(cfg.debug))
 	// the player is addressed as /<youtube url>
 	e.GET("/*", func(c echo.Context) error {
 		if _, ok := youtubeURLFromPath(c.Request().URL.EscapedPath()); !ok {
@@ -299,64 +298,13 @@ func serveStatic(debug bool) echo.HandlerFunc {
 	}
 }
 
-// requestLogger logs every request with slog.
-func requestLogger(logger *slog.Logger) echo.MiddlewareFunc {
-	return middleware.RequestLoggerWithConfig(middleware.RequestLoggerConfig{
-		LogMethod:    true,
-		LogURI:       true,
-		LogStatus:    true,
-		LogLatency:   true,
-		LogRemoteIP:  true,
-		LogUserAgent: true,
-		LogError:     true,
-		// let the error handler run first so the logged status is the one the client received
-		HandleError: true,
-		LogValuesFunc: func(c echo.Context, v middleware.RequestLoggerValues) error {
-			if c.Get(quietKey) == true && v.Status < 400 {
-				return nil
-			}
-			attrs := []any{
-				"method", v.Method,
-				"status", v.Status,
-				"path", v.URI,
-				"duration", v.Latency.String(),
-				"ip", v.RemoteIP,
-				"user_agent", v.UserAgent,
-			}
-			level := slog.LevelInfo
-			switch {
-			case v.Status >= 500:
-				level = slog.LevelError
-				if v.Error != nil {
-					attrs = append(attrs, "error", v.Error.Error())
-				}
-			case v.Status >= 400:
-				level = slog.LevelWarn
-			}
-			logger.Log(c.Request().Context(), level, "HTTP request", attrs...)
-			return nil
-		},
-	})
-}
-
-// quietKey marks a request that the request logger should skip when it succeeds.
-const quietKey = "quiet"
-
-// quiet keeps successful requests to a route out of the access log. Failures are still logged.
-func quiet(next echo.HandlerFunc) echo.HandlerFunc {
-	return func(c echo.Context) error {
-		c.Set(quietKey, true)
-		return next(c)
-	}
-}
-
 // errorResponse is the body of every API error.
 type errorResponse struct {
 	Error string `json:"error"`
 }
 
 // jsonErrorHandler answers errors with {"error": "message"}. Unexpected errors are reported as a generic
-// 500 and are logged, with their details, by the request logger.
+// 500; this is where they are logged, with their details. Client errors (4xx) are not logged.
 func jsonErrorHandler(logger *slog.Logger) echo.HTTPErrorHandler {
 	return func(err error, c echo.Context) {
 		if c.Response().Committed {
@@ -371,6 +319,10 @@ func jsonErrorHandler(logger *slog.Logger) echo.HTTPErrorHandler {
 			if text, ok := httpError.Message.(string); ok && text != "" {
 				message = text
 			}
+		}
+		if code >= http.StatusInternalServerError {
+			logger.Error("Request failed",
+				"method", c.Request().Method, "path", c.Request().URL.Path, "status", code, "error", err.Error())
 		}
 		var sendErr error
 		if c.Request().Method == http.MethodHead {
