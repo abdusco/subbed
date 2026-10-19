@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 
 	"github.com/doug-martin/goqu/v9"
 	_ "github.com/doug-martin/goqu/v9/dialect/sqlite3"
@@ -25,7 +26,12 @@ type VideoWithSubs struct {
 
 // NewRepository creates a new repository instance
 func NewRepository(dbPath string) (*Repository, error) {
-	sqlDB, err := sql.Open("sqlite", dbPath)
+	// foreign_keys and busy_timeout apply to one connection only, so they are set for every connection of the
+	// pool here, not with PRAGMA statements below. Without foreign_keys, deleting a job or video could leave its
+	// logs, jobs and subtitles behind.
+	dsn := "file:" + strings.NewReplacer("%", "%25", "?", "%3f", "#", "%23").Replace(dbPath) +
+		"?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)"
+	sqlDB, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
@@ -35,8 +41,6 @@ func NewRepository(dbPath string) (*Repository, error) {
 		"PRAGMA journal_mode=WAL",            // Write-Ahead Logging for better concurrency
 		"PRAGMA synchronous=NORMAL",          // Balanced durability/performance
 		"PRAGMA cache_size=-64000",           // 64MB cache
-		"PRAGMA busy_timeout=5000",           // 5 second timeout for locked database
-		"PRAGMA foreign_keys=ON",             // Enforce foreign key constraints
 		"PRAGMA temp_store=MEMORY",           // Store temp tables in memory
 		"PRAGMA mmap_size=268435456",         // 256MB memory-mapped I/O
 		"PRAGMA page_size=4096",              // 4KB page size (must be set before DB creation)
