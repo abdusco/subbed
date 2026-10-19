@@ -693,6 +693,19 @@
                         />
                         <span class="hint" x-text="t('generation.modelHint', { model: generation.modelDefault })"></span>
                     </label>
+                    <label class="field">
+                        <span x-text="t('generation.translateModel')"></span>
+                        <input
+                            type="text"
+                            x-model="generation.translateModel"
+                            :placeholder="t('generation.modelPlaceholder', { model: generation.translateModelDefault })"
+                            maxlength="200"
+                            autocomplete="off"
+                            autocapitalize="none"
+                            spellcheck="false"
+                        />
+                        <span class="hint" x-text="t('generation.translateModelHint', { model: generation.translateModelDefault })"></span>
+                    </label>
                     <div class="section-actions">
                         <button class="btn btn-primary btn-small" type="submit" :disabled="!canSaveModel">
                             <span x-text="generation.busy === 'model' ? t('common.working') : t('common.save')"></span>

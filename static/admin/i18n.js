@@ -122,7 +122,9 @@ export const messages = {
         "generation.model": "Transcription model",
         "generation.modelPlaceholder": "e.g. {model}",
         "generation.modelHint": "An OpenRouter speech-to-text model. Leave it empty to use {model}.",
-        "generation.modelSaved": "Model saved",
+        "generation.translateModel": "Translation model",
+        "generation.translateModelHint": "An OpenRouter chat model. Leave it empty to use {model}.",
+        "generation.modelSaved": "Models saved",
         "generation.cookies": "YouTube cookies",
         "generation.cookiesHint":
             "Paste a cookies.txt in Netscape format. New values replace old ones, other cookies stay. They are kept on the server and never shown again.",
@@ -260,7 +262,9 @@ export const messages = {
         "generation.model": "Yazıya dökme modeli",
         "generation.modelPlaceholder": "örn. {model}",
         "generation.modelHint": "Bir OpenRouter konuşma tanıma modeli. Boş bırakırsan {model} kullanılır.",
-        "generation.modelSaved": "Model kaydedildi",
+        "generation.translateModel": "Çeviri modeli",
+        "generation.translateModelHint": "Bir OpenRouter sohbet modeli. Boş bırakırsan {model} kullanılır.",
+        "generation.modelSaved": "Modeller kaydedildi",
         "generation.cookies": "YouTube çerezleri",
         "generation.cookiesHint":
             "Netscape biçiminde bir cookies.txt yapıştır. Yeni değerler eskilerin yerine geçer, diğer çerezler kalır. Sunucuda saklanır ve bir daha gösterilmez.",

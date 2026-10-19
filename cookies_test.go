@@ -201,6 +201,7 @@ func TestCookieEndpoints(t *testing.T) {
 }
 
 func TestSettingsEndpoints(t *testing.T) {
+	t.Setenv("TRANSLATE_MODEL", "")
 	app := newTestApp(t)
 
 	assert.Equal(t, 401, app.do(http.MethodGet, "/api/admin/settings", nil, nil, false).Code, "get without login")
@@ -213,7 +214,10 @@ func TestSettingsEndpoints(t *testing.T) {
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &settings))
 		return settings
 	}
-	assert.Equal(t, settingsResponse{TranscribeModelDefault: "openai/whisper-large-v3-turbo"}, read())
+	assert.Equal(t, settingsResponse{
+		TranscribeModelDefault: "openai/whisper-large-v3-turbo",
+		TranslateModelDefault:  "google/gemini-3.5-flash-lite",
+	}, read())
 	model, err := app.repo.transcribeModel(context.Background())
 	require.NoError(t, err)
 	assert.Equal(t, "openai/whisper-large-v3-turbo", model, "the default applies")

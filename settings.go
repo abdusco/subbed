@@ -1,9 +1,11 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 	"unicode/utf8"
 
@@ -15,6 +17,7 @@ import (
 
 const (
 	settingTranscribeModel = "transcribe_model"
+	settingTranslateModel  = "translate_model"
 	maxModelLen            = 200
 )
 
@@ -63,11 +66,30 @@ type settingsResponse struct {
 	// TranscribeModel is what the admin set; empty means the default is used
 	TranscribeModel        string `json:"transcribe_model"`
 	TranscribeModelDefault string `json:"transcribe_model_default"`
+	TranslateModel         string `json:"translate_model"`
+	TranslateModelDefault  string `json:"translate_model_default"`
+}
+
+func defaultTranslateModel() string {
+	return cmp.Or(os.Getenv("TRANSLATE_MODEL"), subtitle.DefaultTranslateModel)
+}
+
+// translateModel uses the saved choice, then the environment setting, then the built-in default.
+func (r *Repository) translateModel(ctx context.Context) (string, error) {
+	model, _, err := r.GetSetting(ctx, settingTranslateModel)
+	return cmp.Or(model, defaultTranslateModel()), err
 }
 
 func readSettings(ctx context.Context, repo *Repository) (settingsResponse, error) {
 	model, _, err := repo.GetSetting(ctx, settingTranscribeModel)
-	return settingsResponse{TranscribeModel: model, TranscribeModelDefault: subtitle.DefaultTranscribeModel}, err
+	if err != nil {
+		return settingsResponse{}, err
+	}
+	translateModel, _, err := repo.GetSetting(ctx, settingTranslateModel)
+	return settingsResponse{
+		TranscribeModel: model, TranscribeModelDefault: subtitle.DefaultTranscribeModel,
+		TranslateModel: translateModel, TranslateModelDefault: defaultTranslateModel(),
+	}, err
 }
 
 func getSettings(repo *Repository) echo.HandlerFunc {
@@ -85,22 +107,39 @@ func updateSettings(repo *Repository) echo.HandlerFunc {
 	return func(c echo.Context) error {
 		var req struct {
 			TranscribeModel *string `json:"transcribe_model"`
+			TranslateModel  *string `json:"translate_model"`
 		}
 		if err := c.Bind(&req); err != nil {
 			return echo.NewHTTPError(http.StatusBadRequest, "Invalid request")
 		}
 		ctx := c.Request().Context()
 
-		if req.TranscribeModel != nil {
-			model := strings.TrimSpace(*req.TranscribeModel)
+		models := []struct {
+			key   string
+			value *string
+		}{
+			{settingTranscribeModel, req.TranscribeModel},
+			{settingTranslateModel, req.TranslateModel},
+		}
+		for _, setting := range models {
+			if setting.value == nil {
+				continue
+			}
+			model := strings.TrimSpace(*setting.value)
 			if utf8.RuneCountInString(model) > maxModelLen || strings.ContainsFunc(model, func(r rune) bool { return r == ' ' || r < ' ' }) {
 				return echo.NewHTTPError(http.StatusBadRequest, "Invalid model name")
 			}
+		}
+		for _, setting := range models {
+			if setting.value == nil {
+				continue
+			}
+			model := strings.TrimSpace(*setting.value)
 			var err error
 			if model == "" {
-				err = repo.DeleteSetting(ctx, settingTranscribeModel)
+				err = repo.DeleteSetting(ctx, setting.key)
 			} else {
-				err = repo.SetSetting(ctx, settingTranscribeModel, model)
+				err = repo.SetSetting(ctx, setting.key, model)
 			}
 			if err != nil {
 				return err

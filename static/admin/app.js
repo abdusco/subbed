@@ -188,6 +188,9 @@ document.addEventListener("alpine:init", () => {
             model: "",
             savedModel: "",
             modelDefault: "",
+            translateModel: "",
+            savedTranslateModel: "",
+            translateModelDefault: "",
             cookiesText: "",
             cookieCount: 0,
             /** @type {string[]} */
@@ -978,7 +981,11 @@ document.addEventListener("alpine:init", () => {
         // ---- subtitle generation settings ----
 
         get canSaveModel() {
-            return this.generation.busy === "" && this.generation.model.trim() !== this.generation.savedModel;
+            return (
+                this.generation.busy === "" &&
+                (this.generation.model.trim() !== this.generation.savedModel ||
+                    this.generation.translateModel.trim() !== this.generation.savedTranslateModel)
+            );
         },
 
         get cookieSummary() {
@@ -987,11 +994,14 @@ document.addEventListener("alpine:init", () => {
             return this.t("generation.cookiesStored", { n: cookieCount, domains: cookieDomains.join(", ") });
         },
 
-        /** @param {{ transcribe_model: string, transcribe_model_default: string }} settings */
+        /** @param {{ transcribe_model: string, transcribe_model_default: string, translate_model: string, translate_model_default: string }} settings */
         applySettings(settings) {
             this.generation.model = settings.transcribe_model;
             this.generation.savedModel = settings.transcribe_model;
             this.generation.modelDefault = settings.transcribe_model_default;
+            this.generation.translateModel = settings.translate_model;
+            this.generation.savedTranslateModel = settings.translate_model;
+            this.generation.translateModelDefault = settings.translate_model_default;
         },
 
         /** @param {{ count: number, domains: string[] }} summary */
@@ -1048,7 +1058,10 @@ document.addEventListener("alpine:init", () => {
                     await this.api("/api/admin/settings", {
                         method: "PUT",
                         headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ transcribe_model: this.generation.model.trim() }),
+                        body: JSON.stringify({
+                            transcribe_model: this.generation.model.trim(),
+                            translate_model: this.generation.translateModel.trim(),
+                        }),
                     }),
                 );
                 return this.t("generation.modelSaved");

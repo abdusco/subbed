@@ -33,13 +33,14 @@ type fakeTools struct {
 	transcribe func(ctx context.Context, model, language string, progress progressFunc) (subtitle.Transcript, error)
 	translate  func(ctx context.Context, cues []subtitle.Cue, language string, progress progressFunc) ([]subtitle.Cue, error)
 
-	mutex       sync.Mutex
-	downloads   []string
-	cookiesSeen string
-	cookiesFile string
-	models      []string
-	languages   []string
-	translated  []string
+	mutex           sync.Mutex
+	downloads       []string
+	cookiesSeen     string
+	cookiesFile     string
+	models          []string
+	languages       []string
+	translated      []string
+	translateModels []string
 }
 
 func (f *fakeTools) Ready() error { return f.ready }
@@ -74,9 +75,10 @@ func (f *fakeTools) Transcribe(ctx context.Context, model, path, language string
 	return subtitle.Transcript{SRT: testSRT, Language: "en", Cues: 2}, nil
 }
 
-func (f *fakeTools) Translate(ctx context.Context, cues []subtitle.Cue, language string, progress progressFunc, logf logFunc) ([]subtitle.Cue, error) {
+func (f *fakeTools) Translate(ctx context.Context, model string, cues []subtitle.Cue, language string, progress progressFunc, logf logFunc) ([]subtitle.Cue, error) {
 	f.mutex.Lock()
 	f.translated = append(f.translated, language)
+	f.translateModels = append(f.translateModels, model)
 	f.mutex.Unlock()
 	if f.translate != nil {
 		return f.translate(ctx, cues, language, progress)

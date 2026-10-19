@@ -34,14 +34,13 @@ type jobTools interface {
 	Ready() error
 	DownloadAudio(ctx context.Context, videoURL, directory, cookiesFile string, progress progressFunc, logf logFunc) (string, error)
 	Transcribe(ctx context.Context, model, path, language string, progress progressFunc, logf logFunc) (subtitle.Transcript, error)
-	Translate(ctx context.Context, cues []subtitle.Cue, language string, progress progressFunc, logf logFunc) ([]subtitle.Cue, error)
+	Translate(ctx context.Context, model string, cues []subtitle.Cue, language string, progress progressFunc, logf logFunc) ([]subtitle.Cue, error)
 }
 
 // aiTools downloads with yt-dlp and calls OpenRouter models.
 type aiTools struct {
-	ytdlp          *youtube.YtDlp
-	apiKey         string
-	translateModel string
+	ytdlp  *youtube.YtDlp
+	apiKey string
 }
 
 func (t aiTools) Ready() error {
@@ -63,8 +62,8 @@ func (t aiTools) Transcribe(ctx context.Context, model, path, language string, p
 	return transcriber.Transcribe(ctx, path)
 }
 
-func (t aiTools) Translate(ctx context.Context, cues []subtitle.Cue, language string, progress progressFunc, logf logFunc) ([]subtitle.Cue, error) {
-	translator := subtitle.NewTranslator(subtitle.NewClient(t.apiKey, ""), t.translateModel)
+func (t aiTools) Translate(ctx context.Context, model string, cues []subtitle.Cue, language string, progress progressFunc, logf logFunc) ([]subtitle.Cue, error) {
+	translator := subtitle.NewTranslator(subtitle.NewClient(t.apiKey, ""), model)
 	translator.Logf = logf
 	translator.Progress = func(fraction float64) { progress(fraction, "") }
 	return translator.Translate(ctx, cues, language)
@@ -350,7 +349,12 @@ func (j *JobRunner) translate(ctx context.Context, videoID int, srt, target stri
 		return err
 	}
 	log.info(ctx, "Translating %d cues to %s", len(cues), languageName(target))
-	translated, err := j.tools.Translate(ctx, cues, languageName(target), progress, log.writer(ctx, ""))
+	model, err := j.repo.translateModel(ctx)
+	if err != nil {
+		return err
+	}
+	log.info(ctx, "Translating with %s", model)
+	translated, err := j.tools.Translate(ctx, model, cues, languageName(target), progress, log.writer(ctx, ""))
 	if err != nil {
 		return err
 	}

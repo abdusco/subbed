@@ -21,7 +21,6 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 
-	"subbed/internal/subtitle"
 	"subbed/internal/youtube"
 )
 
@@ -144,9 +143,8 @@ func run() error {
 	ytdlp := youtube.NewYtDlp(cmp.Or(os.Getenv("YTDLP_PATH"), filepath.Join(filepath.Dir(dbPath), "bin", "yt-dlp")))
 
 	runner := NewJobRunner(repo, aiTools{
-		ytdlp:          ytdlp,
-		apiKey:         os.Getenv("OPENROUTER_API_KEY"),
-		translateModel: cmp.Or(os.Getenv("TRANSLATE_MODEL"), subtitle.DefaultTranslateModel),
+		ytdlp:  ytdlp,
+		apiKey: os.Getenv("OPENROUTER_API_KEY"),
 	}, logger)
 
 	e := newServer(serverConfig{repo: repo, assets: assets, creds: creds, sessionKey: sessionKey, debug: debug, logger: logger, ytdlp: ytdlp, jobs: runner})
