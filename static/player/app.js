@@ -345,14 +345,13 @@ document.addEventListener("alpine:init", () => {
                         onReady: () => {
                             if (this.canFullscreen) blockIframeFullscreen();
                             hideYoutubeCaptions();
+                            this.startSync();
+                            this.tick();
                             resolve();
                         },
                         // the captions module loads lazily, so react when a module loads and on every state change
                         onApiChange: () => hideYoutubeCaptions(),
-                        onStateChange: (/** @type {any} */ event) => {
-                            // @ts-ignore
-                            if (event.data === YT.PlayerState.PLAYING) this.startSync();
-                            else this.stopSync();
+                        onStateChange: () => {
                             hideYoutubeCaptions();
                             this.tick();
                         },
@@ -379,6 +378,7 @@ document.addEventListener("alpine:init", () => {
 
         startSync() {
             this.stopSync();
+            // Iframe seeks can finish without a state change, including while paused.
             let ticks = 0;
             syncTimer = window.setInterval(() => {
                 this.tick();
