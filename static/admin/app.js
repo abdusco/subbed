@@ -690,6 +690,8 @@ document.addEventListener("alpine:init", () => {
         onPaste(event) {
             const file = event.clipboardData?.files[0];
             if (file) {
+                // a pasted file that isn't a subtitle (an image, say) is none of our business
+                if (!subtitleTypeFromName(file.name)) return;
                 event.preventDefault();
                 this.receiveFile(file);
                 return;
