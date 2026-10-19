@@ -203,6 +203,28 @@
                                 <span class="job-status" :class="`is-${job.status}`" x-text="t(`jobs.status.${job.status}`)"></span>
                                 <span class="job-title" x-text="job.video_title"></span>
                                 <time class="job-time" :datetime="jobDate(job).toISOString()" x-text="formatJobTime(job)"></time>
+                                <span class="job-actions">
+                                    <button
+                                        class="btn btn-ghost btn-icon btn-small"
+                                        type="button"
+                                        x-show="isJobActive(job)"
+                                        :disabled="Boolean(jobBusy[job.id])"
+                                        :aria-label="t('jobs.cancel')"
+                                        :title="t('jobs.cancel')"
+                                        @click="cancelJob(job)"
+                                    >
+                                        <svg class="icon"><use href="#i-stop" /></svg>
+                                    </button>
+                                    <button
+                                        class="btn btn-ghost btn-icon btn-small btn-danger-text"
+                                        type="button"
+                                        :aria-label="t('jobs.delete')"
+                                        :title="t('jobs.delete')"
+                                        @click="askDelete('job', job, `${job.video_title} · ${formatJobTime(job)}`)"
+                                    >
+                                        <svg class="icon"><use href="#i-trash" /></svg>
+                                    </button>
+                                </span>
                                 <div class="job-progress" x-show="job.status === 'running'">
                                     <progress max="100" :value="job.progress" :aria-label="jobProgressText(job)"></progress>
                                     <span class="hint" x-text="jobProgressText(job)"></span>
@@ -226,29 +248,6 @@
                                 </template>
                             </div>
                         </details>
-                        <!-- beside the summary, not in it: a summary can't hold buttons -->
-                        <span class="job-actions">
-                            <button
-                                class="btn btn-ghost btn-icon btn-small"
-                                type="button"
-                                x-show="isJobActive(job)"
-                                :disabled="Boolean(jobBusy[job.id])"
-                                :aria-label="t('jobs.cancel')"
-                                :title="t('jobs.cancel')"
-                                @click="cancelJob(job)"
-                            >
-                                <svg class="icon"><use href="#i-stop" /></svg>
-                            </button>
-                            <button
-                                class="btn btn-ghost btn-icon btn-small btn-danger-text"
-                                type="button"
-                                :aria-label="t('jobs.delete')"
-                                :title="t('jobs.delete')"
-                                @click="askDelete('job', job, `${job.video_title} · ${formatJobTime(job)}`)"
-                            >
-                                <svg class="icon"><use href="#i-trash" /></svg>
-                            </button>
-                        </span>
                     </div>
                 </template>
                 <button

@@ -289,6 +289,7 @@ main {
 
 .jobs {
     display: grid;
+    grid-template-columns: minmax(0, 1fr);
     gap: 8px;
     justify-items: start;
     margin-bottom: 20px;
@@ -313,16 +314,14 @@ main {
     align-items: center;
     gap: 10px;
     min-height: 44px;
-    padding: 10px 92px 10px 14px; /* room on the right for the buttons */
+    padding: 10px 14px;
     cursor: pointer;
 }
 
-/* the buttons sit over the right end of the summary row, since a summary can't contain them */
 .job-actions {
-    position: absolute;
-    top: 4px;
-    right: 8px;
     display: flex;
+    flex: none;
+    margin-left: auto;
     gap: 2px;
 }
 
@@ -330,6 +329,7 @@ main {
 .job-progress {
     display: flex;
     flex-basis: 100%;
+    min-width: 0;
     align-items: center;
     gap: 12px;
 }
@@ -360,13 +360,21 @@ main {
     background: var(--accent);
 }
 
+.job-progress progress {
+    flex: 1 1 60px;
+}
+
 .job-progress .hint {
-    flex: none;
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-align: right;
+    text-overflow: ellipsis;
     white-space: nowrap;
 }
 
 .job-title {
-    flex: 1;
+    flex: 1 1 140px; /* wraps below the status before it gets squeezed away */
     min-width: 0;
     overflow: hidden;
     font-weight: 600;
@@ -426,6 +434,11 @@ main {
 .log-line {
     display: flex;
     gap: 10px;
+}
+
+.log-line span {
+    min-width: 0;
+    overflow-wrap: anywhere;
 }
 
 .log-line time {
