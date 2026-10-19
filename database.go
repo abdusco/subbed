@@ -204,6 +204,7 @@ func (r *Repository) ListAllVideos(ctx context.Context) ([]VideoWithSubs, error)
 	var videos []Video
 	err := r.db.From("videos").
 		Select("id", "original_url", "title").
+		Order(goqu.C("id").Desc()).
 		ScanStructsContext(ctx, &videos)
 
 	if err != nil {
