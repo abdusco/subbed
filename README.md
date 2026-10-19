@@ -141,7 +141,6 @@ Set these as environment variables.
 | `HOST`              | `127.0.0.1`   | Network interface to listen on. Use `0.0.0.0` in Docker or to allow other devices to connect.              |
 | `PORT`              | `3000`        | Port to listen on.                                                                                         |
 | `OPENROUTER_API_KEY` |              | OpenRouter key for generating subtitles. Without it, the **Generate** button answers that it isn't set.    |
-| `TRANSLATE_MODEL`   | `google/gemini-3.5-flash-lite` | Default OpenRouter chat model for translations; override it in the subtitle generation panel.              |
 | `YTDLP_PATH`        | `<data dir>/bin/yt-dlp` | Where subbed keeps its own yt-dlp when none is in the `PATH`.                                   |
 | `LISTEN_ADDR`       |               | Full address such as `0.0.0.0:8080`. Overrides `HOST` and `PORT`.                                          |
 | `DEBUG`             | `0`           | Set to `1` to serve the web files from disk and log in a readable format instead of JSON. For development. |
@@ -224,7 +223,7 @@ Admin (needs the session cookie; without it the API answers `401`, and `/admin` 
 - `GET /api/admin/cookies`: how many cookies are stored and for which domains, as `{ "count": 2, "domains": ["youtube.com"] }`; never the values
 - `PUT /api/admin/cookies`: JSON body `{ "cookies": "<text of a Netscape cookies.txt>" }`; upserts by domain and name
 - `DELETE /api/admin/cookies`: remove all cookies
-- `GET /api/admin/settings`, `PUT /api/admin/settings`: settings include `transcribe_model` and `translate_model`, plus read-only `transcribe_model_default` and `translate_model_default`. PUT changes only supplied model fields; an empty model restores its default. Translation falls back to `TRANSLATE_MODEL`, then the built-in default.
+- `GET /api/admin/settings`, `PUT /api/admin/settings`: settings include `transcribe_model` and `translate_model`, plus read-only `transcribe_model_default` and `translate_model_default`. PUT changes only supplied model fields; an empty model restores its built-in default.
 - `GET /api/admin/yt-dlp`: `{ "installed": true, "version": "..." }`; `POST /api/admin/yt-dlp/update` updates it
 
 </details>

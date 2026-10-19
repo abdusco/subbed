@@ -12,7 +12,6 @@ import (
 )
 
 func TestTranslationModelSettings(t *testing.T) {
-	t.Setenv("TRANSLATE_MODEL", "provider/environment")
 	app := newTestApp(t)
 	ctx := context.Background()
 
@@ -24,13 +23,13 @@ func TestTranslationModelSettings(t *testing.T) {
 		stored   string
 		resolved string
 	}{
-		{"default", map[string]string{}, 200, "", "provider/environment"},
+		{"default", map[string]string{}, 200, "", "google/gemini-3.5-flash-lite"},
 		{"save and trim", map[string]string{"translate_model": "  provider/custom  "}, 200, "provider/custom", "provider/custom"},
 		{"omitted", map[string]string{"transcribe_model": "provider/speech"}, 200, "provider/custom", "provider/custom"},
 		{"space", map[string]string{"translate_model": "two words"}, 400, "provider/custom", "provider/custom"},
 		{"newline", map[string]string{"translate_model": "a\nb"}, 400, "provider/custom", "provider/custom"},
 		{"too long", map[string]string{"translate_model": strings.Repeat("m", maxModelLen+1)}, 400, "provider/custom", "provider/custom"},
-		{"reset", map[string]string{"translate_model": " "}, 200, "", "provider/environment"},
+		{"reset", map[string]string{"translate_model": " "}, 200, "", "google/gemini-3.5-flash-lite"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := app.putJSON("/api/admin/settings", tc.body, true)
@@ -40,7 +39,7 @@ func TestTranslationModelSettings(t *testing.T) {
 			var settings settingsResponse
 			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &settings))
 			assert.Equal(t, tc.stored, settings.TranslateModel)
-			assert.Equal(t, "provider/environment", settings.TranslateModelDefault)
+			assert.Equal(t, "google/gemini-3.5-flash-lite", settings.TranslateModelDefault)
 			model, err := app.repo.translateModel(ctx)
 			require.NoError(t, err)
 			assert.Equal(t, tc.resolved, model)
@@ -58,17 +57,14 @@ func TestTranslationModelSettings(t *testing.T) {
 
 func TestTranslationJobUsesConfiguredModel(t *testing.T) {
 	for _, tc := range []struct {
-		name        string
-		environment string
-		saved       string
-		want        string
+		name  string
+		saved string
+		want  string
 	}{
-		{"built-in default", "", "", "google/gemini-3.5-flash-lite"},
-		{"environment default", "provider/environment", "", "provider/environment"},
-		{"saved override", "provider/environment", "provider/custom", "provider/custom"},
+		{"built-in default", "", "google/gemini-3.5-flash-lite"},
+		{"saved override", "provider/custom", "provider/custom"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv("TRANSLATE_MODEL", tc.environment)
 			tools := &fakeTools{}
 			app, runner := newJobApp(t, tools)
 			videoID := addTestVideo(t, app)

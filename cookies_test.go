@@ -201,7 +201,6 @@ func TestCookieEndpoints(t *testing.T) {
 }
 
 func TestSettingsEndpoints(t *testing.T) {
-	t.Setenv("TRANSLATE_MODEL", "")
 	app := newTestApp(t)
 
 	assert.Equal(t, 401, app.do(http.MethodGet, "/api/admin/settings", nil, nil, false).Code, "get without login")

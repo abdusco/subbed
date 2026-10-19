@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"os"
 	"strings"
 	"unicode/utf8"
 
@@ -70,14 +69,10 @@ type settingsResponse struct {
 	TranslateModelDefault  string `json:"translate_model_default"`
 }
 
-func defaultTranslateModel() string {
-	return cmp.Or(os.Getenv("TRANSLATE_MODEL"), subtitle.DefaultTranslateModel)
-}
-
-// translateModel uses the saved choice, then the environment setting, then the built-in default.
+// translateModel uses the saved choice, then the built-in default.
 func (r *Repository) translateModel(ctx context.Context) (string, error) {
 	model, _, err := r.GetSetting(ctx, settingTranslateModel)
-	return cmp.Or(model, defaultTranslateModel()), err
+	return cmp.Or(model, subtitle.DefaultTranslateModel), err
 }
 
 func readSettings(ctx context.Context, repo *Repository) (settingsResponse, error) {
@@ -88,7 +83,7 @@ func readSettings(ctx context.Context, repo *Repository) (settingsResponse, erro
 	translateModel, _, err := repo.GetSetting(ctx, settingTranslateModel)
 	return settingsResponse{
 		TranscribeModel: model, TranscribeModelDefault: subtitle.DefaultTranscribeModel,
-		TranslateModel: translateModel, TranslateModelDefault: defaultTranslateModel(),
+		TranslateModel: translateModel, TranslateModelDefault: subtitle.DefaultTranslateModel,
 	}, err
 }
 
