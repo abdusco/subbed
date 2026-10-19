@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -143,6 +144,7 @@ func ytDlpUpdate(ytdlp ytDlpTool) echo.HandlerFunc {
 		if err != nil {
 			return echo.NewHTTPError(http.StatusBadGateway, "Couldn't update yt-dlp").SetInternal(err)
 		}
+		slog.Info("Updated yt-dlp", "version", version)
 		return c.JSON(http.StatusOK, map[string]any{"installed": true, "version": version, "output": output})
 	}
 }
@@ -190,6 +192,7 @@ func addVideo(repo *Repository) echo.HandlerFunc {
 		if err != nil {
 			return err
 		}
+		slog.Info("Added video", "video", id, "youtube_id", videoID, "title", req.Title)
 
 		return c.JSON(http.StatusOK, map[string]any{"id": id})
 	}
@@ -251,6 +254,7 @@ func deleteVideo(repo *Repository, runner *JobRunner) echo.HandlerFunc {
 		if err := repo.DeleteVideo(c.Request().Context(), id); err != nil {
 			return err
 		}
+		slog.Info("Deleted video", "video", id)
 		return c.JSON(http.StatusOK, map[string]any{"success": true})
 	}
 }
@@ -306,6 +310,7 @@ func uploadSubtitle(repo *Repository) echo.HandlerFunc {
 		if err != nil {
 			return err
 		}
+		slog.Info("Uploaded subtitle", "video", videoID, "language", language, "type", fileType, "bytes", len(content))
 
 		return c.JSON(http.StatusOK, map[string]any{"success": true})
 	}
@@ -321,6 +326,7 @@ func deleteSubtitle(repo *Repository) echo.HandlerFunc {
 		if err := repo.DeleteSubtitle(c.Request().Context(), id); err != nil {
 			return err
 		}
+		slog.Info("Deleted subtitle", "subtitle", id)
 		return c.JSON(http.StatusOK, map[string]any{"success": true})
 	}
 }

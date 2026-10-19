@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"unicode/utf8"
@@ -139,6 +140,7 @@ func updateSettings(repo *Repository) echo.HandlerFunc {
 			if err != nil {
 				return err
 			}
+			slog.Info("Changed setting", "key", setting.key, "value", model)
 		}
 
 		settings, err := readSettings(ctx, repo)

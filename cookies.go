@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"sort"
@@ -245,6 +246,7 @@ func saveCookies(repo *Repository) echo.HandlerFunc {
 		if err != nil {
 			return err
 		}
+		slog.Info("Saved cookies", "imported", len(cookies), "stored", len(stored))
 		return c.JSON(http.StatusOK, summarizeCookies(stored))
 	}
 }
@@ -254,6 +256,7 @@ func deleteCookies(repo *Repository) echo.HandlerFunc {
 		if err := repo.DeleteCookies(c.Request().Context()); err != nil {
 			return err
 		}
+		slog.Info("Deleted cookies")
 		return c.JSON(http.StatusOK, cookieSummary{Domains: []string{}})
 	}
 }
