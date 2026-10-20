@@ -1023,14 +1023,14 @@ document.addEventListener("alpine:init", () => {
             this.$refs.generationDialog.showModal();
             this.generation.failed = false;
             try {
-                const [settings, cookies, ytdlp] = await Promise.all([
-                    this.api("/api/admin/settings"),
-                    this.api("/api/admin/cookies"),
-                    this.api("/api/admin/yt-dlp").catch(() => ({ installed: false, version: "" })),
+                // Populate each section immediately; checking the yt-dlp binary can take a while.
+                await Promise.all([
+                    this.api("/api/admin/settings").then((settings) => this.applySettings(settings)),
+                    this.api("/api/admin/cookies").then((cookies) => this.applyCookies(cookies)),
+                    this.api("/api/admin/yt-dlp")
+                        .catch(() => ({ installed: false, version: "" }))
+                        .then((ytdlp) => this.applyYtDlp(ytdlp)),
                 ]);
-                this.applySettings(settings);
-                this.applyCookies(cookies);
-                this.applyYtDlp(ytdlp);
             } catch (error) {
                 this.generation.failed = true;
                 this.toast("error", error.message);
