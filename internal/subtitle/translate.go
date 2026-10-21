@@ -52,14 +52,22 @@ func NewTranslator(client *Client, model string) *Translator {
 	return &Translator{Client: client, Model: model, BatchSize: 20, Workers: 8}
 }
 
+// TranslateResult is the result of a translation.
+type TranslateResult struct {
+	Cues []Cue
+	// CostUSD is charged for all requests, repeated and failed batches included; 0 if the model doesn't
+	// report it. It is set when Translate fails, too.
+	CostUSD float64
+}
+
 // Translate translates the cues into language (a name the model understands, such as "Turkish"). The result has
 // the same indices and time lines; only the text changes.
-func (t *Translator) Translate(ctx context.Context, cues []Cue, language string) ([]Cue, error) {
+func (t *Translator) Translate(ctx context.Context, cues []Cue, language string) (TranslateResult, error) {
 	if t.Client == nil || t.Model == "" {
-		return nil, errors.New("translator needs a client and a model")
+		return TranslateResult{}, errors.New("translator needs a client and a model")
 	}
 	if t.BatchSize < 1 || t.Workers < 1 {
-		return nil, errors.New("batch size and workers must be at least 1")
+		return TranslateResult{}, errors.New("batch size and workers must be at least 1")
 	}
 
 	type bounds struct{ start, end int }
@@ -71,21 +79,27 @@ func (t *Translator) Translate(ctx context.Context, cues []Cue, language string)
 	// the first failure cancels the batches still running and is the error that is returned
 	workers := pool.New().WithContext(ctx).WithMaxGoroutines(t.Workers).WithCancelOnError().WithFirstError()
 	translations := make([][]string, len(batches))
+	batchCosts := make([]float64, len(batches))
 	var finished atomic.Int32
 	for position, batch := range batches {
 		workers.Go(func(ctx context.Context) error {
 			logger.FromCtx(ctx).Debug(fmt.Sprintf("Translating cues %d-%d of %d with %s", batch.start+1, batch.end, len(cues), t.Model))
-			texts, err := t.translateBatch(ctx, cues[batch.start:batch.end],
+			texts, costUSD, err := t.translateBatch(ctx, cues[batch.start:batch.end],
 				cues[max(0, batch.start-contextCues):batch.start], cues[batch.end:min(batch.end+contextCues, len(cues))], language)
-			translations[position] = texts
+			translations[position], batchCosts[position] = texts, costUSD
 			if err == nil && t.Progress != nil {
 				t.Progress(float64(finished.Add(1)) / float64(len(batches)))
 			}
 			return err
 		})
 	}
-	if err := workers.Wait(); err != nil {
-		return nil, err
+	err := workers.Wait()
+	costUSD := 0.0
+	for _, batchCost := range batchCosts {
+		costUSD += batchCost
+	}
+	if err != nil {
+		return TranslateResult{CostUSD: costUSD}, err
 	}
 
 	translated := make([]Cue, 0, len(cues))
@@ -96,13 +110,13 @@ func (t *Translator) Translate(ctx context.Context, cues []Cue, language string)
 			translated = append(translated, cue)
 		}
 	}
-	return translated, nil
+	return TranslateResult{Cues: translated, CostUSD: costUSD}, nil
 }
 
 // translateBatch translates one batch, with the before and after cues sent only as context. An invalid reply
 // (wrong count, bad indices, empty text) is retried up to maxValidationAttempts times with the problem appended
-// to the prompt. It returns one text per cue, in order.
-func (t *Translator) translateBatch(ctx context.Context, cues, before, after []Cue, language string) ([]string, error) {
+// to the prompt. It returns one text per cue, in order, and the USD charged for all attempts.
+func (t *Translator) translateBatch(ctx context.Context, cues, before, after []Cue, language string) ([]string, float64, error) {
 	type item struct {
 		Index int    `json:"index"`
 		Text  string `json:"text"`
@@ -119,11 +133,12 @@ func (t *Translator) translateBatch(ctx context.Context, cues, before, after []C
 	encoder := json.NewEncoder(&payload)
 	encoder.SetEscapeHTML(false)
 	if err := encoder.Encode(input); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	prompt := fmt.Sprintf(translatePrompt, language, strings.TrimSpace(payload.String()))
 
 	lastProblem := ""
+	costUSD := 0.0
 	for attempt := 1; attempt <= maxValidationAttempts; attempt++ {
 		content := prompt
 		if lastProblem != "" {
@@ -136,23 +151,24 @@ func (t *Translator) translateBatch(ctx context.Context, cues, before, after []C
 			"messages":        []map[string]string{{"role": "user", "content": content}},
 		})
 		if err != nil {
-			return nil, err
+			return nil, costUSD, err
 		}
+		costUSD += response.CostUSD
 		if response.Status != 200 {
-			return nil, fmt.Errorf("translation failed with status %d: %.300s", response.Status, response.Body)
+			return nil, costUSD, fmt.Errorf("translation failed with status %d: %.300s", response.Status, response.Body)
 		}
 
 		reply, err := replyContent(response.Body)
 		if err == nil {
 			var translated []string
 			if translated, err = parseTranslations(reply, len(cues)); err == nil {
-				return translated, nil
+				return translated, costUSD, nil
 			}
 		}
 		lastProblem = err.Error()
 		logger.FromCtx(ctx).Warn(fmt.Sprintf("Invalid response (%s), attempt %d/%d", lastProblem, attempt, maxValidationAttempts))
 	}
-	return nil, fmt.Errorf("batch starting at cue %d failed: %s", cues[0].Index, lastProblem)
+	return nil, costUSD, fmt.Errorf("batch starting at cue %d failed: %s", cues[0].Index, lastProblem)
 }
 
 func texts(cues []Cue) []string {

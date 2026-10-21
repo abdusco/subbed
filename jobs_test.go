@@ -76,16 +76,17 @@ func (f *fakeTools) Transcribe(ctx context.Context, model, path, language string
 	return subtitle.Transcript{SRT: testSRT, Language: "en", Cues: 2}, nil
 }
 
-func (f *fakeTools) Translate(ctx context.Context, model string, cues []subtitle.Cue, language string, progress progressFunc) ([]subtitle.Cue, error) {
+func (f *fakeTools) Translate(ctx context.Context, model string, cues []subtitle.Cue, language string, progress progressFunc) (subtitle.TranslateResult, error) {
 	f.mutex.Lock()
 	f.translated = append(f.translated, language)
 	f.translateModels = append(f.translateModels, model)
 	f.mutex.Unlock()
 	if f.translate != nil {
-		return f.translate(ctx, cues, language, progress)
+		translated, err := f.translate(ctx, cues, language, progress)
+		return subtitle.TranslateResult{Cues: translated}, err
 	}
 	progress(1, "")
-	return prefixCues(cues, language+": "), nil
+	return subtitle.TranslateResult{Cues: prefixCues(cues, language+": ")}, nil
 }
 
 func prefixCues(cues []subtitle.Cue, prefix string) []subtitle.Cue {

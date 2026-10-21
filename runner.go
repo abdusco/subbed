@@ -29,7 +29,7 @@ type jobTools interface {
 	Ready() error
 	DownloadAudio(ctx context.Context, videoURL, directory, cookiesFile string, progress progressFunc) (string, error)
 	Transcribe(ctx context.Context, model, path, language string, progress progressFunc) (subtitle.Transcript, error)
-	Translate(ctx context.Context, model string, cues []subtitle.Cue, language string, progress progressFunc) ([]subtitle.Cue, error)
+	Translate(ctx context.Context, model string, cues []subtitle.Cue, language string, progress progressFunc) (subtitle.TranslateResult, error)
 }
 
 // aiTools downloads with yt-dlp and calls OpenRouter models.
@@ -56,10 +56,17 @@ func (t aiTools) Transcribe(ctx context.Context, model, path, language string, p
 	return transcriber.Transcribe(ctx, path)
 }
 
-func (t aiTools) Translate(ctx context.Context, model string, cues []subtitle.Cue, language string, progress progressFunc) ([]subtitle.Cue, error) {
+func (t aiTools) Translate(ctx context.Context, model string, cues []subtitle.Cue, language string, progress progressFunc) (subtitle.TranslateResult, error) {
 	translator := subtitle.NewTranslator(subtitle.NewClient(t.apiKey, ""), model)
 	translator.Progress = func(fraction float64) { progress(fraction, "") }
 	return translator.Translate(ctx, cues, language)
+}
+
+// logCost logs what a step cost; nothing is logged when the model didn't report a cost.
+func logCost(log *slog.Logger, step string, costUSD float64) {
+	if costUSD > 0 {
+		log.Info(fmt.Sprintf("%s cost $%.4f", step, costUSD))
+	}
 }
 
 // jobProgress stores one job's progress. The tools report in fractions of what they do; span places that on the
@@ -290,6 +297,7 @@ func (j *JobRunner) transcribe(ctx context.Context, job *Job) error {
 	if err != nil {
 		return fmt.Errorf("transcription failed: %w", err)
 	}
+	logCost(log, "Transcription", transcript.CostUSD)
 
 	source := job.SourceLanguage
 	if source == "" {
@@ -352,10 +360,11 @@ func (j *JobRunner) translate(ctx context.Context, videoID int, srt, target stri
 	}
 	log.Info("Translating with " + model)
 	translated, err := j.tools.Translate(ctx, model, cues, languageName(target), progress)
+	logCost(log, "Translation", translated.CostUSD) // a failed translation was charged, too
 	if err != nil {
 		return err
 	}
-	if err := j.repo.SaveSubtitle(ctx, videoID, target, "srt", subtitle.RenderSRT(translated)); err != nil {
+	if err := j.repo.SaveSubtitle(ctx, videoID, target, "srt", subtitle.RenderSRT(translated.Cues)); err != nil {
 		return err
 	}
 	log.Info("Saved the " + target + " subtitle")

@@ -52,8 +52,14 @@ func decodeChatRequest(t *testing.T, r *http.Request) chatRequest {
 	return chatRequest{Prompt: prompt, Before: parsed.Before, Items: parsed.Items, After: parsed.After}
 }
 
+// answerCostUSD is what every completion reports as its cost.
+const answerCostUSD = 0.25
+
 func completion(content string) string {
-	encoded, _ := json.Marshal(map[string]any{"choices": []any{map[string]any{"message": map[string]string{"content": content}}}})
+	encoded, _ := json.Marshal(map[string]any{
+		"choices": []any{map[string]any{"message": map[string]string{"content": content}}},
+		"usage":   map[string]float64{"cost": answerCostUSD},
+	})
 	return string(encoded)
 }
 
@@ -109,8 +115,8 @@ func TestTranslateBatchesWithContextAndKeepsTimelines(t *testing.T) {
 	cues := testCues(5)
 	got, err := translator.Translate(context.Background(), cues, "Turkish")
 	require.NoError(t, err)
-	require.Len(t, got, 5)
-	for position, cue := range got {
+	require.Len(t, got.Cues, 5)
+	for position, cue := range got.Cues {
 		assert.Equal(t, cues[position].Index, cue.Index)
 		assert.Equal(t, cues[position].Timeline, cue.Timeline)
 		assert.Equal(t, "tr:"+cues[position].Text, cue.Text)
@@ -157,7 +163,8 @@ func TestTranslateRetriesAnInvalidReplyWithTheProblem(t *testing.T) {
 
 	got, err := translator.Translate(context.Background(), testCues(2), "German")
 	require.NoError(t, err)
-	assert.Equal(t, "ok:line 1", got[0].Text)
+	assert.Equal(t, "ok:line 1", got.Cues[0].Text)
+	assert.Equal(t, 2*answerCostUSD, got.CostUSD, "the invalid reply was charged, too")
 	require.Len(t, prompts, 2)
 	assert.NotContains(t, prompts[0], "previous answer")
 	assert.Contains(t, prompts[1], "Your previous answer was invalid: expected 2 translations, got 1")
@@ -170,9 +177,10 @@ func TestTranslateGivesUpAfterRepeatedInvalidReplies(t *testing.T) {
 		w.Write([]byte(completion("I cannot do that")))
 	})
 
-	_, err := translator.Translate(context.Background(), testCues(3), "German")
+	got, err := translator.Translate(context.Background(), testCues(3), "German")
 	assert.ErrorContains(t, err, "batch starting at cue 1")
 	assert.Equal(t, maxValidationAttempts, calls)
+	assert.Equal(t, maxValidationAttempts*answerCostUSD, got.CostUSD, "a failed translation reports what it cost")
 }
 
 func TestTranslateStopsOnClientErrors(t *testing.T) {
