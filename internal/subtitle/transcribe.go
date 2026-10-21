@@ -49,6 +49,8 @@ type Transcript struct {
 	// Language is the source language: the configured one, else what the model detected (may be empty)
 	Language string
 	Cues     int
+	// CostUSD is charged for all requests, 0 if the model doesn't report it
+	CostUSD float64
 }
 
 // NewTranscriber returns a Transcriber with the defaults: diarization on, no speed-up, 60 minute chunks.
@@ -140,6 +142,7 @@ func (t *Transcriber) Transcribe(ctx context.Context, path string) (Transcript, 
 	const extractionShare = 0.05
 	t.diarizeRejected = false
 	language := t.Language
+	costUSD := 0.0
 	var segments []Segment
 	offset := 0.0
 	for position, chunk := range chunks {
@@ -157,6 +160,7 @@ func (t *Transcriber) Transcribe(ctx context.Context, path string) (Transcript, 
 		if err != nil {
 			return Transcript{}, fmt.Errorf("chunk %d/%d: %w", position+1, len(chunks), err)
 		}
+		costUSD += result.costUSD
 		if language == "" {
 			language = result.language
 		}
@@ -179,7 +183,7 @@ func (t *Transcriber) Transcribe(ctx context.Context, path string) (Transcript, 
 	t.progress(1, "")
 
 	cues := buildCues(formatCues(groupDialogue(segments)))
-	return Transcript{SRT: RenderSRT(cues), Language: language, Cues: len(cues)}, nil
+	return Transcript{SRT: RenderSRT(cues), Language: language, Cues: len(cues), CostUSD: costUSD}, nil
 }
 
 // extractChunks writes mono 16 kHz mp3 chunks of the audio into directory, in order.
@@ -226,6 +230,8 @@ type chunkResult struct {
 	segments      []Segment
 	hasTimestamps bool
 	language      string
+	// costUSD is charged for the chunk, requests that were repeated included
+	costUSD float64
 }
 
 // diarizing reports whether speaker labels are being asked for: they are wanted, and no model has refused them yet.
@@ -266,20 +272,26 @@ func (t *Transcriber) transcribeChunk(ctx context.Context, path string, duration
 		return chunkResult{}, err
 	}
 
-	response, err := t.Client.Post(ctx, "/audio/transcriptions", t.chunkRequest(audio, false))
+	costUSD := 0.0
+	post := func(plain bool) (Response, error) {
+		response, err := t.Client.Post(ctx, "/audio/transcriptions", t.chunkRequest(audio, plain))
+		costUSD += response.CostUSD
+		return response, err
+	}
+	response, err := post(false)
 	if err != nil {
 		return chunkResult{}, err
 	}
 	if response.Status == 400 && t.diarizing() {
 		logger.FromCtx(ctx).Warn(fmt.Sprintf("The model doesn't take speaker labels (%.200s); continuing without them", response.Body))
 		t.diarizeRejected = true
-		if response, err = t.Client.Post(ctx, "/audio/transcriptions", t.chunkRequest(audio, false)); err != nil {
+		if response, err = post(false); err != nil {
 			return chunkResult{}, err
 		}
 	}
 	if response.Status == 400 {
 		logger.FromCtx(ctx).Warn(fmt.Sprintf("Model rejected verbose_json (%.200s); using a single cue per chunk", response.Body))
-		if response, err = t.Client.Post(ctx, "/audio/transcriptions", t.chunkRequest(audio, true)); err != nil {
+		if response, err = post(true); err != nil {
 			return chunkResult{}, err
 		}
 	}
@@ -295,7 +307,7 @@ func (t *Transcriber) transcribeChunk(ctx context.Context, path string, duration
 		return chunkResult{}, fmt.Errorf("empty transcription (%d bytes of audio); response: %.300s", len(audio), response.Body)
 	}
 
-	result := chunkResult{language: data.Language, hasTimestamps: true}
+	result := chunkResult{language: data.Language, hasTimestamps: true, costUSD: costUSD}
 	if t.diarizing() {
 		if turns := turnsFromWords(data.Words); len(turns) > 0 {
 			result.segments = turns

@@ -135,7 +135,7 @@ func TestTranscribeContinuesWithoutSpeakerLabelsWhenTheModelRefusesThem(t *testi
 	refused := func(w http.ResponseWriter) {
 		http.Error(w, `{"error":{"message":"The selected model does not support diarize."}}`, http.StatusBadRequest)
 	}
-	segments := reply(`{"language":"en","segments":[{"start":0,"end":2,"text":"Hello there."}]}`)
+	segments := reply(`{"language":"en","segments":[{"start":0,"end":2,"text":"Hello there."}],"usage":{"cost":0.5}}`)
 	transcriber, payloads := newTestTranscriber(t, "2", refused, segments, segments)
 	logs := &bytes.Buffer{}
 	ctx := logger.ToCtx(context.Background(), slog.New(slog.NewTextHandler(logs, nil)))
@@ -144,6 +144,7 @@ func TestTranscribeContinuesWithoutSpeakerLabelsWhenTheModelRefusesThem(t *testi
 	require.NoError(t, err)
 	assert.Equal(t, "1\n00:00:00,000 --> 00:00:02,000\nHello there.\n\n2\n00:00:10,000 --> 00:00:12,000\nHello there.\n", got.SRT)
 	assert.Equal(t, "en", got.Language)
+	assert.Equal(t, 1.0, got.CostUSD, "the costs of both chunks are added up")
 
 	require.Len(t, *payloads, 3, "the refused request is repeated once, and the next chunk doesn't ask again")
 	assert.Equal(t, true, (*payloads)[0]["diarize"])

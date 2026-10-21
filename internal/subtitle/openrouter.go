@@ -48,6 +48,8 @@ func NewClient(apiKey, baseURL string) *Client {
 type Response struct {
 	Status int
 	Body   []byte
+	// CostUSD is what OpenRouter charged for the request, 0 if the answer doesn't report one
+	CostUSD float64
 }
 
 // APIError reports that the API kept answering with a retryable status.
@@ -130,5 +132,11 @@ func (c *Client) send(ctx context.Context, path string, body []byte) (Response, 
 	if err != nil {
 		return Response{}, err
 	}
-	return Response{Status: reply.StatusCode, Body: data}, nil
+	var usage struct {
+		Usage struct {
+			Cost float64 `json:"cost"`
+		} `json:"usage"`
+	}
+	_ = json.Unmarshal(data, &usage) // not every answer is JSON
+	return Response{Status: reply.StatusCode, Body: data, CostUSD: usage.Usage.Cost}, nil
 }
